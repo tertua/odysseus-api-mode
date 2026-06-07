@@ -1,0 +1,29 @@
+# Binaries (Downloaded dynamically at runtime)
+bin/
+
+# GGUF Model Files (Gigabytes in size, fetched on-demand)
+models/*
+!models/.gitkeep
+
+# Odysseus source code directory (Cloned & pulled dynamically via Git at runtime)
+odysseus/
+
+# Runtime Logs
+logs/
+*.log
+chrome_error.log
+
+# Headless Browser Debugging Profile
+chrome-debug-profile/
+
+# Node.js dependencies
+node_modules/
+npm-debug.log*
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# IDE settings
+.vscode/
+.idea/

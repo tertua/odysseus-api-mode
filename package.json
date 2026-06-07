@@ -1,0 +1,12 @@
+{
+  "name": "odysseus-portable",
+  "version": "1.0.0",
+  "description": "Unified orchestrator for Odysseus and precompiled portable llama.cpp server",
+  "type": "module",
+  "main": "src/start.js",
+  "scripts": {
+    "start": "node src/start.js"
+  },
+  "author": "Antigravity",
+  "license": "MIT"
+}
