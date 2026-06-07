@@ -81,6 +81,94 @@ function patchCookbookHelpers(odysseusDir) {
   }
 }
 
+// Automatically configure Cookbook state to default to the portable models directory
+function configureCookbookState(odysseusDir, projectRoot) {
+  const statePath = path.join(odysseusDir, 'data', 'cookbook_state.json');
+  const modelsDirAbs = path.resolve(projectRoot, 'models');
+  const modelsDirPosix = modelsDirAbs.replace(/\\/g, '/');
+  
+  // Ensure the data directory exists
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+
+  let state = {
+    tasks: [],
+    presets: [],
+    env: {
+      env: "none",
+      envPath: "",
+      gpus: "",
+      remoteHost: "",
+      servers: [
+        {
+          name: "Local",
+          host: "",
+          port: "",
+          env: "none",
+          envPath: "",
+          modelDirs: [
+            "~/.cache/huggingface/hub",
+            modelsDirPosix
+          ],
+          modelDir: "~/.cache/huggingface/hub",
+          downloadDir: modelsDirPosix,
+          platform: "windows"
+        }
+      ],
+      modelPaths: [],
+      platform: "windows",
+      defaultServer: ""
+    },
+    serveState: {
+      _byRepo: {},
+      _lastUsed: {}
+    }
+  };
+
+  if (fs.existsSync(statePath)) {
+    try {
+      const existing = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      if (existing && existing.env) {
+        state = existing;
+        if (!state.env.servers) {
+          state.env.servers = [
+            {
+              name: "Local",
+              host: "",
+              port: "",
+              env: "none",
+              envPath: "",
+              modelDirs: ["~/.cache/huggingface/hub"],
+              modelDir: "~/.cache/huggingface/hub",
+              downloadDir: "",
+              platform: "windows"
+            }
+          ];
+        }
+        
+        const localServer = state.env.servers.find(s => s.name === "Local") || state.env.servers[0];
+        if (localServer) {
+          localServer.downloadDir = modelsDirPosix;
+          if (!localServer.modelDirs) {
+            localServer.modelDirs = ["~/.cache/huggingface/hub"];
+          }
+          if (!localServer.modelDirs.includes(modelsDirPosix)) {
+            localServer.modelDirs.push(modelsDirPosix);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[Odysseus Warning] Failed to parse existing cookbook_state.json, recreating: ', err.message);
+    }
+  }
+
+  try {
+    fs.writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf8');
+    console.log(`[Odysseus] Configured Cookbook default download folder to: ${modelsDirPosix}`);
+  } catch (err) {
+    console.warn('[Odysseus Warning] Failed to save cookbook_state.json:', err.message);
+  }
+}
+
 
 // Setup Windows embedded Python environment
 async function setupWindowsPython(odysseusDir) {
@@ -440,6 +528,9 @@ finally:
   fs.writeFileSync(seedScriptPath, seedScript, 'utf8');
   execSync(`"${pythonExe}" seed_portable.py`, { cwd: odysseusDir, stdio: 'inherit' });
   fs.unlinkSync(seedScriptPath);
+
+  // Configure Cookbook default directories to point to our portable folder
+  configureCookbookState(odysseusDir, projectRoot);
 
   // Step 8: Spawn llama-server subprocess
   console.log('\n[Inference] Starting llama-server on port 10086...');
