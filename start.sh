@@ -17,4 +17,16 @@ if ! command -v node &> /dev/null; then
 fi
 
 echo "Starting orchestrator..."
-node src/start.js
+node src/start.js "$@"
+exit_code=$?
+
+if [ $exit_code -ne 0 ]; then
+    echo
+    echo "==================================================="
+    echo "  [ERROR] Orchestrator exited with code $exit_code"
+    echo "  Please check the logs above or in the 'logs/' folder."
+    echo "==================================================="
+    read -n 1 -s -r -p "Press any key to exit..."
+    echo
+    exit $exit_code
+fi

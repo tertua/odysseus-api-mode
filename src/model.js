@@ -55,7 +55,7 @@ export const PREDEFINED_MODELS = [
   }
 ];
 
-export async function selectAndPrepareModel(modelsDir) {
+export async function selectAndPrepareModel(modelsDir, defaultModelFile) {
   if (!fs.existsSync(modelsDir)) {
     fs.mkdirSync(modelsDir, { recursive: true });
   }
@@ -118,8 +118,14 @@ export async function selectAndPrepareModel(modelsDir) {
   console.log(`Tip: You can drag and drop any GGUF file into the 'models' folder.`);
   console.log("========================================================");
   
+  let defaultIdx = -1;
+  if (defaultModelFile) {
+    defaultIdx = options.findIndex(opt => opt.file.toLowerCase() === defaultModelFile.toLowerCase());
+  }
+
   options.forEach((opt, idx) => {
-    console.log(`[${idx + 1}] ${opt.name} (${opt.sizeGB})`);
+    const isDefault = idx === defaultIdx;
+    console.log(`[${idx + 1}] ${opt.name} (${opt.sizeGB})${isDefault ? ' (default)' : ''}`);
   });
   console.log("========================================================");
 
@@ -131,8 +137,17 @@ export async function selectAndPrepareModel(modelsDir) {
   const getSelection = () => {
     return new Promise((resolve) => {
       const ask = () => {
-        rl.question(`Enter selection [1-${options.length}]: `, (answer) => {
-          const choice = parseInt(answer.trim(), 10);
+        const promptText = defaultIdx !== -1 
+          ? `Enter selection [1-${options.length}] (default ${defaultIdx + 1}): `
+          : `Enter selection [1-${options.length}]: `;
+        rl.question(promptText, (answer) => {
+          const trimmed = answer.trim();
+          if (trimmed === '' && defaultIdx !== -1) {
+            rl.close();
+            resolve(options[defaultIdx]);
+            return;
+          }
+          const choice = parseInt(trimmed, 10);
           if (!isNaN(choice) && choice >= 1 && choice <= options.length) {
             rl.close();
             resolve(options[choice - 1]);

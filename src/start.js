@@ -1,14 +1,24 @@
 import fs from 'fs';
 import path from 'path';
+import readline from 'readline';
 import { fileURLToPath } from 'url';
 import { execSync, spawn } from 'child_process';
-import http from 'http';
 import net from 'net';
 
-// Import our local utility modules
-import { detectHardware } from './system.js';
-import { downloadFile, extractArchive, getLlamaCppAssets, printProgressBar } from './downloader.js';
-import { selectAndPrepareModel } from './model.js';
+import { downloadFile, extractArchive, printProgressBar } from './downloader.js';
+import { startLlamaBackend } from './backends/llama/index.js';
+import { startOllamaBackend } from './backends/ollama/index.js';
+
+// Global error handling to ensure non-zero exit codes on crash
+process.on('uncaughtException', (err) => {
+  console.error('\n[Fatal Error] Uncaught Exception:', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('\n[Fatal Error] Unhandled Rejection:', reason);
+  process.exit(1);
+});
 
 // Resolve project root and subdirectories
 const __filename = fileURLToPath(import.meta.url);
@@ -18,6 +28,43 @@ const odysseusDir = path.join(projectRoot, 'odysseus');
 const binDir = path.join(projectRoot, 'bin');
 const modelsDir = path.join(projectRoot, 'models');
 const logsDir = path.join(projectRoot, 'logs');
+
+const launcherConfigPath = path.join(projectRoot, 'data', 'launcher_config.json');
+
+function loadLauncherConfig() {
+  if (fs.existsSync(launcherConfigPath)) {
+    try {
+      return JSON.parse(fs.readFileSync(launcherConfigPath, 'utf8')) || {};
+    } catch (e) {
+      console.warn('[Orchestrator Warning] Failed to parse launcher_config.json:', e.message);
+    }
+  }
+  return {};
+}
+
+function saveLauncherConfig(config) {
+  try {
+    fs.mkdirSync(path.dirname(launcherConfigPath), { recursive: true });
+    const current = loadLauncherConfig();
+    const updated = { ...current, ...config };
+    fs.writeFileSync(launcherConfigPath, JSON.stringify(updated, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('[Orchestrator Warning] Failed to save launcher_config.json:', e.message);
+  }
+}
+
+function promptQuestion(query) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  return new Promise((resolve) => {
+    rl.question(query, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
 
 const pyZipUrl = 'https://www.python.org/ftp/python/3.12.9/python-3.12.9-embed-amd64.zip';
 const pipUrl = 'https://bootstrap.pypa.io/get-pip.py';
@@ -29,6 +76,23 @@ function printHeader() {
   console.log("=================================================================");
   console.log(`Working Directory: ${projectRoot}`);
   console.log("=================================================================\n");
+}
+
+function getBackendChoice(config) {
+  const arg = process.argv.find(a => a.startsWith('--backend='));
+  if (arg) {
+    const val = arg.split('=')[1].toLowerCase();
+    if (val === 'llama' || val === 'llamacpp' || val === 'llama.cpp') return 'llama';
+    return 'ollama';
+  }
+  if (process.env.ODYSSEUS_BACKEND) {
+    const raw = process.env.ODYSSEUS_BACKEND.toLowerCase();
+    if (raw === 'llama' || raw === 'llamacpp' || raw === 'llama.cpp') return 'llama';
+    return 'ollama';
+  }
+  const saved = config?.backend;
+  if (saved === 'llama' || saved === 'ollama') return saved;
+  return null; // indicates we need to prompt
 }
 
 // Git clone/sync helper
@@ -43,6 +107,17 @@ function ensureOdysseusCloned(odysseusDir) {
   } else {
     console.log('[Git] Odysseus repository detected. Checking for updates...');
     try {
+      const generatedPatchFiles = [
+        path.join('routes', 'cookbook_helpers.py'),
+        path.join('routes', 'cookbook_routes.py'),
+        path.join('static', 'js', 'cookbookRunning.js'),
+        path.join('static', 'js', 'cookbook.js'),
+        path.join('static', 'js', 'cookbook-hwfit.js')
+      ];
+      execSync(`git restore -- ${generatedPatchFiles.map(file => `"${file}"`).join(' ')}`, {
+        cwd: odysseusDir,
+        stdio: 'ignore'
+      });
       execSync('git pull', {
         cwd: odysseusDir,
         stdio: 'inherit'
@@ -115,16 +190,7 @@ function patchCookbookRoutes(odysseusDir) {
       }
       if (!content.includes('HUGGING_FACE_HUB_TOKEN') && content.includes('def _load_stored_hf_token() -> str:')) {
         console.log('[Odysseus] Patching Cookbook HF token fallback support...');
-        const target = `    def _load_stored_hf_token() -> str:
-        if not _cookbook_state_path.exists():
-            return ""
-        try:
-            state = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
-            env = state.get("env") if isinstance(state, dict) else {}
-            return _decrypt_secret(env.get("hfToken") if isinstance(env, dict) else "")
-        except Exception:
-            return ""
-`;
+        const target = /    def _load_stored_hf_token\(\) -> str:\r?\n        if not _cookbook_state_path\.exists\(\):\r?\n            return ""\r?\n        try:\r?\n            state = json\.loads\(_cookbook_state_path\.read_text\(encoding="utf-8"\)\)\r?\n            env = state\.get\("env"\) if isinstance\(state, dict\) else \{}\r?\n            return _decrypt_secret\(env\.get\("hfToken"\) if isinstance\(env, dict\) else ""\)\r?\n        except Exception:\r?\n            return ""\r?\n/;
         const replacement = `    def _load_stored_hf_token() -> str:
         try:
             if _cookbook_state_path.exists():
@@ -151,7 +217,7 @@ function patchCookbookRoutes(odysseusDir) {
                 pass
         return ""
 `;
-        if (content.includes(target)) {
+        if (target.test(content)) {
           content = content.replace(target, replacement);
           changed = true;
         } else {
@@ -186,6 +252,173 @@ function patchCookbookStateNormalizer(odysseusDir) {
       }
     } catch (err) {
       console.warn('[Odysseus Warning] Failed to patch Cookbook modelDirs normalization:', err.message);
+    }
+  }
+}
+
+// Self-healing patch for Serve list scanning. In portable mode, the configured
+// model directory is the source of truth; global Hugging Face caches contain
+// partial or unrelated downloads and should not appear in the Serve tab.
+function patchCookbookPortableServeScan(odysseusDir) {
+  const helpersPath = path.join(odysseusDir, 'routes', 'cookbook_helpers.py');
+  if (fs.existsSync(helpersPath)) {
+    try {
+      let content = fs.readFileSync(helpersPath, 'utf8');
+      const target = /        "for _hf_cache in hf_cache_paths\(\): scan_hf\(_hf_cache\)",\r?\n        "scan_ollama\(\)",\r?\n        "scan_ollama_api\(\)",\r?\n    \]\r?\n    for model_dir in model_dirs or \[\]:/;
+      const replacement = [
+        '        "scan_ollama()",',
+        '        "scan_ollama_api()",',
+        '    ]',
+        '    if not model_dirs:',
+        '        lines.append("for _hf_cache in hf_cache_paths(): scan_hf(_hf_cache)")',
+        '    for model_dir in model_dirs or []:'
+      ].join('\n');
+      if (target.test(content)) {
+        console.log('[Odysseus] Patching Cookbook Serve scan to prefer portable model dirs...');
+        content = content.replace(target, replacement);
+        fs.writeFileSync(helpersPath, content, 'utf8');
+        console.log('[Odysseus] Cookbook Serve scan successfully patched.');
+      }
+    } catch (err) {
+      console.warn('[Odysseus Warning] Failed to patch Cookbook Serve scan:', err.message);
+    }
+  }
+}
+
+// Self-healing patch for Windows llama.cpp Serve commands. The portable bundle
+// ships native llama-server.exe, so Serve should use it directly instead of
+// falling into python -m llama_cpp.server.
+function patchCookbookWindowsLlamaServer(odysseusDir) {
+  const cookbookJsPath = path.join(odysseusDir, 'static', 'js', 'cookbook.js');
+  if (fs.existsSync(cookbookJsPath)) {
+    try {
+      let content = fs.readFileSync(cookbookJsPath, 'utf8');
+      const target = /    const _lcpServer = `\$\{lcPrefix\}\$\{py\} -m llama_cpp\.server --model \$\{modelArg\} --host 0\.0\.0\.0 --port \$\{f\.port \|\| '8080'\} --n_gpu_layers \$\{f\.ngl \|\| '99'\} --n_ctx \$\{f\.ctx \|\| '8192'\}\$\{_lcpExtra\}`;\r?\n    if \(_isWindows\(\)\) \{\r?\n      cmd \+= _lcpServer;\r?\n    \} else \{\r?\n      cmd \+= `\$\{lcPrefix\}llama-server --model \$\{modelArg\} --host 0\.0\.0\.0 --port \$\{f\.port \|\| '8080'\} -ngl \$\{f\.ngl \|\| '99'\} -c \$\{f\.ctx \|\| '8192'\}\$\{_lcExtra\}`;\r?\n      cmd \+= ` \|\| \$\{_lcpServer\}`;\r?\n    \}/;
+      const replacement = [
+        "    _lcExtra += ' --reasoning off';",
+        "    const _nativeServer = `${lcPrefix}llama-server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} -ngl ${f.ngl || '99'} -c ${f.ctx || '8192'}${_lcExtra}`;",
+        "    const _lcpServer = `${lcPrefix}${py} -m llama_cpp.server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} --n_gpu_layers ${f.ngl || '99'} --n_ctx ${f.ctx || '8192'}${_lcpExtra}`;",
+        "    if (_isWindows()) {",
+        "      cmd += _nativeServer;",
+        "    } else {",
+        "      cmd += _nativeServer;",
+        "      cmd += ` || ${_lcpServer}`;",
+        "    }"
+      ].join('\n');
+      if (target.test(content)) {
+        console.log('[Odysseus] Patching Cookbook Windows llama.cpp Serve command...');
+        content = content.replace(target, replacement);
+        fs.writeFileSync(cookbookJsPath, content, 'utf8');
+        console.log('[Odysseus] Cookbook Windows llama.cpp Serve command successfully patched.');
+      }
+    } catch (err) {
+      console.warn('[Odysseus Warning] Failed to patch Cookbook Windows llama.cpp Serve command:', err.message);
+    }
+  }
+}
+
+// Self-healing patch for router VRAM pressure. A 16k default context can make
+// 8B/9B GGUF models fail on 15 GB GPUs when the KV cache is allocated.
+function patchLlamaRouterContext(projectRoot) {
+  const llamaBackendPath = path.join(projectRoot, 'src', 'backends', 'llama', 'index.js');
+  if (fs.existsSync(llamaBackendPath)) {
+    try {
+      let content = fs.readFileSync(llamaBackendPath, 'utf8');
+      const target = /'--ctx-size', '16384'/g;
+      if (target.test(content)) {
+        console.log('[Odysseus] Patching llama router context to 4096...');
+        content = content.replace(target, "'--ctx-size', '4096'");
+        fs.writeFileSync(llamaBackendPath, content, 'utf8');
+        console.log('[Odysseus] Llama router context successfully patched.');
+      }
+    } catch (err) {
+      console.warn('[Odysseus Warning] Failed to patch llama router context:', err.message);
+    }
+  }
+}
+
+// Self-healing patch for stale frontend states that call /api/model/cached
+// without model_dir. Local portable scans still use cookbook_state modelDirs.
+function patchCookbookCachedRoutePortableFallback(odysseusDir) {
+  const routesPath = path.join(odysseusDir, 'routes', 'cookbook_routes.py');
+  if (fs.existsSync(routesPath)) {
+    try {
+      let content = fs.readFileSync(routesPath, 'utf8');
+      const target = /        if model_dir:\r?\n            for d in model_dir\.split\(','\):\r?\n                d = d\.strip\(\)\r?\n                if d:\r?\n                    translated_d = translate_path\(d\) if not host else d\r?\n                    model_dirs\.append\(translated_d\)\r?\n        win_hf_hub = None/;
+      const replacement = [
+        '        if model_dir:',
+        "            for d in model_dir.split(','):",
+        '                d = d.strip()',
+        '                if d:',
+        '                    translated_d = translate_path(d) if not host else d',
+        '                    model_dirs.append(translated_d)',
+        '        elif not host:',
+        '            try:',
+        '                state = json.loads(_cookbook_state_path.read_text(encoding="utf-8")) if _cookbook_state_path.exists() else {}',
+        '                env = state.get("env") if isinstance(state, dict) else {}',
+        '                servers = env.get("servers") if isinstance(env, dict) else []',
+        '                local_server = next((s for s in servers if isinstance(s, dict) and not s.get("host")), None)',
+        '                if local_server:',
+        '                    for d in local_server.get("modelDirs") or [local_server.get("modelDir")]:',
+        '                        if d and d != "~/.cache/huggingface/hub":',
+        '                            model_dirs.append(translate_path(str(d)))',
+        '            except Exception:',
+        '                model_dirs = []',
+        '        win_hf_hub = None'
+      ].join('\n');
+      if (target.test(content)) {
+        console.log('[Odysseus] Patching cached model route portable fallback...');
+        content = content.replace(target, replacement);
+        fs.writeFileSync(routesPath, content, 'utf8');
+        console.log('[Odysseus] Cached model route portable fallback successfully patched.');
+      }
+    } catch (err) {
+      console.warn('[Odysseus Warning] Failed to patch cached model route portable fallback:', err.message);
+    }
+  }
+}
+
+// Self-healing patch for Ollama dropdown and engine filter in cookbook UI.
+function patchCookbookOllamaDropdown(odysseusDir) {
+  const cookbookJsPath = path.join(odysseusDir, 'static', 'js', 'cookbook.js');
+  if (fs.existsSync(cookbookJsPath)) {
+    try {
+      let content = fs.readFileSync(cookbookJsPath, 'utf8');
+      const targetStr = "html += '<option value=\"llamacpp\">llama.cpp</option>';";
+      const replacementStr = "html += '<option value=\"llamacpp\">llama.cpp</option>';\n  html += '<option value=\"ollama\">Ollama</option>';";
+      if (content.includes(targetStr)) {
+        console.log('[Odysseus] Patching cookbook.js to add Ollama option...');
+        content = content.replace(targetStr, replacementStr);
+        fs.writeFileSync(cookbookJsPath, content, 'utf8');
+        console.log('[Odysseus] cookbook.js successfully patched.');
+      }
+    } catch (err) {
+      console.warn('[Odysseus Warning] Failed to patch cookbook.js dropdown:', err.message);
+    }
+  }
+
+  const hwfitJsPath = path.join(odysseusDir, 'static', 'js', 'cookbook-hwfit.js');
+  if (fs.existsSync(hwfitJsPath)) {
+    try {
+      let content = fs.readFileSync(hwfitJsPath, 'utf8');
+      const targetStr = "try { return _detectBackend(m).backend === want; } catch { return true; }";
+      const replacementStr = `try {
+      const detected = _detectBackend(m).backend;
+      if (want === 'ollama') {
+        return detected === 'ollama' || detected === 'llamacpp';
+      }
+      return detected === want;
+    } catch {
+      return true;
+    }`;
+      if (content.includes(targetStr)) {
+        console.log('[Odysseus] Patching cookbook-hwfit.js for Ollama engine filter...');
+        content = content.replace(targetStr, replacementStr);
+        fs.writeFileSync(hwfitJsPath, content, 'utf8');
+        console.log('[Odysseus] cookbook-hwfit.js successfully patched.');
+      }
+    } catch (err) {
+      console.warn('[Odysseus Warning] Failed to patch cookbook-hwfit.js engine filter:', err.message);
     }
   }
 }
@@ -406,38 +639,6 @@ async function setupUnixPython(odysseusDir) {
   return pythonPath;
 }
 
-// Start local HTTP proxy mapping port 8080 to llama-server port 10086
-function startProxy(localPort, targetPort) {
-  const server = http.createServer((req, res) => {
-    const options = {
-      hostname: '127.0.0.1',
-      port: targetPort,
-      path: req.url,
-      method: req.method,
-      headers: req.headers
-    };
-
-    const proxyReq = http.request(options, (proxyRes) => {
-      res.writeHead(proxyRes.statusCode, proxyRes.headers);
-      proxyRes.pipe(res, { end: true });
-    });
-
-    proxyReq.on('error', (err) => {
-      console.error(`[Proxy Error] ${err.message}`);
-      res.writeHead(502, { 'Content-Type': 'text/plain' });
-      res.end(`Bad Gateway: Failed to connect to llama-server on port ${targetPort}`);
-    });
-
-    req.pipe(proxyReq, { end: true });
-  });
-
-  server.listen(localPort, '127.0.0.1', () => {
-    console.log(`[Proxy] Headless API proxy listening on http://127.0.0.1:${localPort} (forwarding to http://127.0.0.1:${targetPort})`);
-  });
-
-  return server;
-}
-
 // TCP Port readiness check helper
 function waitPort(port, timeoutMs = 60000) {
   return new Promise((resolve, reject) => {
@@ -471,6 +672,26 @@ function waitPort(port, timeoutMs = 60000) {
   });
 }
 
+function isPortOpen(port) {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    socket.setTimeout(500);
+    socket.on('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.on('error', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.on('timeout', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.connect(port, '127.0.0.1');
+  });
+}
+
 // Open URL in default web browser
 function openBrowser(url) {
   const startCmd = process.platform === 'win32' ? 'start' : process.platform === 'darwin' ? 'open' : 'xdg-open';
@@ -481,9 +702,154 @@ function openBrowser(url) {
   }
 }
 
+// Helper to print last few lines of a log file on subprocess crash
+function printLogTail(filePath, lineCount = 20) {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const content = fs.readFileSync(filePath, 'utf8');
+    const lines = content.split(/\r?\n/).filter(line => line.trim() !== '');
+    const tail = lines.slice(-lineCount).join('\n');
+    console.error(`\n--- Last ${lineCount} lines of ${path.basename(filePath)} ---`);
+    console.error(tail);
+    console.error(`---------------------------------------------\n`);
+  } catch (e) {
+    console.error(`[Orchestrator Warning] Failed to read logs from ${filePath}: ${e.message}`);
+  }
+}
+
+// Clean the logs folder of all previous log files
+function cleanLogsFolder(logsDir) {
+  if (fs.existsSync(logsDir)) {
+    try {
+      const files = fs.readdirSync(logsDir);
+      for (const file of files) {
+        const filePath = path.join(logsDir, file);
+        try {
+          if (fs.statSync(filePath).isFile()) {
+            fs.unlinkSync(filePath);
+          }
+        } catch (e) {
+          console.warn(`[Orchestrator Warning] Could not remove log file ${file}: ${e.message}`);
+        }
+      }
+    } catch (e) {
+      console.warn('[Orchestrator Warning] Failed to clean logs folder:', e.message);
+    }
+  }
+}
+
+// Forcefully kill any process occupying target ports to avoid EADDRINUSE errors
+function killProcessOnPort(port) {
+  try {
+    if (process.platform === 'win32') {
+      const output = execSync('netstat -ano', { encoding: 'utf8' });
+      const lines = output.split('\n');
+      const pids = new Set();
+      for (const line of lines) {
+        if (line.includes(`:${port}`) && line.includes('LISTENING')) {
+          const parts = line.trim().split(/\s+/);
+          const pid = parts[parts.length - 1];
+          if (pid && pid !== '0') {
+            pids.add(pid);
+          }
+        }
+      }
+      for (const pid of pids) {
+        console.log(`[Orchestrator] Port ${port} is in use. Terminating process PID ${pid}...`);
+        try {
+          execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
+        } catch (e) {}
+      }
+    } else {
+      try {
+        const pids = execSync(`lsof -t -i :${port}`, { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+        for (const pid of pids) {
+          console.log(`[Orchestrator] Port ${port} is in use. Terminating process PID ${pid}...`);
+          try {
+            execSync(`kill -9 ${pid}`, { stdio: 'ignore' });
+          } catch (e) {}
+        }
+      } catch (e) {
+        try {
+          execSync(`fuser -k ${port}/tcp`, { stdio: 'ignore' });
+        } catch (err) {}
+      }
+    }
+  } catch (err) {}
+}
+
 // Main Orchestrator Flow
 async function main() {
+  // Clean logs folder first
+  cleanLogsFolder(logsDir);
+
+  // Ensure logs directory exists
+  fs.mkdirSync(logsDir, { recursive: true });
+
+  // Setup combined logging
+  const pad = (n) => n.toString().padStart(2, '0');
+  const now = new Date();
+  const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+  const combinedLogPath = path.join(logsDir, `combined_${timestamp}.log`);
+  const combinedLogStream = fs.createWriteStream(combinedLogPath, { flags: 'w' });
+
+  // Hook stdout/stderr to write to the combined log file
+  const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+  const originalStderrWrite = process.stderr.write.bind(process.stderr);
+
+  process.stdout.write = (chunk, encoding, callback) => {
+    try {
+      combinedLogStream.write(chunk, encoding);
+    } catch (e) {}
+    return originalStdoutWrite(chunk, encoding, callback);
+  };
+
+  process.stderr.write = (chunk, encoding, callback) => {
+    try {
+      combinedLogStream.write(chunk, encoding);
+    } catch (e) {}
+    return originalStderrWrite(chunk, encoding, callback);
+  };
+
+  const restoreStdoutStderr = () => {
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+  };
+
   printHeader();
+
+  // Clean up any orphan servers running on our target ports
+  killProcessOnPort(8080);
+  killProcessOnPort(10086);
+  killProcessOnPort(7000);
+
+  // Ensure data directory exists for config loading/saving
+  fs.mkdirSync(path.join(projectRoot, 'data'), { recursive: true });
+
+  const launcherConfig = loadLauncherConfig();
+  let backendChoice = getBackendChoice(launcherConfig);
+
+  if (!backendChoice) {
+    console.log('Choose inference backend:');
+    console.log('  [1] Ollama   - webapp-managed downloads and model switching');
+    console.log('  [2] llama.cpp - portable GGUF llama-server fallback');
+    
+    const defaultBackend = launcherConfig.backend || 'ollama';
+    const defaultLabel = defaultBackend === 'llama' ? 'llama.cpp' : 'Ollama';
+    const defaultNum = defaultBackend === 'llama' ? '2' : '1';
+
+    const answer = await promptQuestion(`Enter selection [1-2] (default ${defaultNum} - ${defaultLabel}): `);
+    if (answer === '') {
+      backendChoice = defaultBackend;
+    } else if (answer === '2') {
+      backendChoice = 'llama';
+    } else {
+      backendChoice = 'ollama';
+    }
+    saveLauncherConfig({ backend: backendChoice });
+  } else {
+    saveLauncherConfig({ backend: backendChoice });
+  }
 
   // Step 1: Ensure directories and sync Odysseus repository
   fs.mkdirSync(binDir, { recursive: true });
@@ -494,6 +860,11 @@ async function main() {
   patchCookbookHelpers(odysseusDir);
   patchCookbookRoutes(odysseusDir);
   patchCookbookStateNormalizer(odysseusDir);
+  patchCookbookPortableServeScan(odysseusDir);
+  patchCookbookWindowsLlamaServer(odysseusDir);
+  patchLlamaRouterContext(projectRoot);
+  patchCookbookCachedRoutePortableFallback(odysseusDir);
+  patchCookbookOllamaDropdown(odysseusDir);
 
   // Step 2: Establish Python Environment
   let pythonExe;
@@ -531,7 +902,7 @@ async function main() {
   const setupEnv = {
     ...process.env,
     ODYSSEUS_ADMIN_USER: 'admin',
-    ODYSSEUS_ADMIN_PASSWORD: 'AdminSecurePassword123!',
+    ODYSSEUS_ADMIN_PASSWORD: 'techjarves',
     ODYSSEUS_SKIP_RUN_HINT: '1'
   };
   execSync(`"${pythonExe}" setup.py`, {
@@ -540,158 +911,35 @@ async function main() {
     stdio: 'inherit'
   });
 
-  // Step 6: Detect hardware and acquire llama-server binary
-  const hw = detectHardware();
-  console.log(`[Hardware] Detected: OS=${hw.os}, Arch=${hw.arch}, GPU=${hw.gpuBackend} (${hw.gpuName})`);
-
-  const llamaDir = path.join(binDir, 'llama');
-  const exeName = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server';
-  const llamaExePath = path.join(llamaDir, exeName);
-
-  if (!fs.existsSync(llamaExePath)) {
-    console.log('[Inference] Precompiled llama-server not found. Downloading...');
-    fs.mkdirSync(llamaDir, { recursive: true });
-
-    const assets = await getLlamaCppAssets(hw);
-    if (!assets.primary) {
-      throw new Error('Could not find compatible llama.cpp binary asset for your system.');
-    }
-
-    console.log(`[Inference] Downloading primary asset: ${assets.primary.name}...`);
-    const primaryZip = path.join(binDir, assets.primary.name);
-    await downloadFile(assets.primary.browser_download_url, primaryZip, (downloaded, total) => {
-      printProgressBar(downloaded, total, 'Downloading primary asset: ');
-    });
-
-    console.log('[Inference] Extracting primary asset...');
-    extractArchive(primaryZip, llamaDir);
-    fs.unlinkSync(primaryZip);
-
-    if (assets.secondary) {
-      console.log(`[Inference] Downloading secondary asset: ${assets.secondary.name}...`);
-      const secondaryZip = path.join(binDir, assets.secondary.name);
-      await downloadFile(assets.secondary.browser_download_url, secondaryZip, (downloaded, total) => {
-        printProgressBar(downloaded, total, 'Downloading secondary asset: ');
-      });
-
-      console.log('[Inference] Extracting secondary asset...');
-      extractArchive(secondaryZip, llamaDir);
-      fs.unlinkSync(secondaryZip);
-    }
-    console.log('[Inference] Setup complete.');
-  } else {
-    console.log('[Inference] Precompiled llama-server detected.');
-  }
-
-  // Step 7: Select & prepare GGUF model
-  const modelSelection = await selectAndPrepareModel(modelsDir);
-
-  // Step 5: Seed endpoint connection settings in SQLite with the selected model
-  console.log('[Odysseus] Seeding custom portable API endpoint...');
-  const seedScript = `
-import sys
-import os
-import uuid
-import json
-
-sys.path.insert(0, ".")
-from core.database import SessionLocal, ModelEndpoint
-from core.database import Session as ChatSession
-
-db = SessionLocal()
-try:
-    url = "http://127.0.0.1:8080/v1"
-    model_name = "${modelSelection.file}"
-    old_url = "http://localhost:8080/v1"
-    old_chat_url = old_url + "/chat/completions"
-    new_chat_url = url + "/chat/completions"
-    existing = (
-        db.query(ModelEndpoint).filter(ModelEndpoint.base_url == url).first()
-        or db.query(ModelEndpoint).filter(ModelEndpoint.base_url == old_url).first()
-    )
-    if not existing:
-        new_ep = ModelEndpoint(
-            id=str(uuid.uuid4()),
-            name="Odysseus Portable LLM",
-            base_url=url,
-            is_enabled=True,
-            model_type="llm",
-            endpoint_kind="local",
-            model_refresh_mode="auto",
-            cached_models=json.dumps([model_name]),
-            supports_tools=True
-        )
-        db.add(new_ep)
-        db.commit()
-        print(f"  [ok] Registered Odysseus Portable LLM endpoint successfully with: {model_name}")
-    else:
-        existing.base_url = url
-        existing.is_enabled = True
-        existing.supports_tools = True
-        existing.cached_models = json.dumps([model_name])
-        print(f"  [ok] Odysseus Portable LLM endpoint verified and cached model set to: {model_name}")
-    migrated = (
-        db.query(ChatSession)
-        .filter(ChatSession.endpoint_url == old_chat_url)
-        .update({ChatSession.endpoint_url: new_chat_url}, synchronize_session=False)
-    )
-    db.commit()
-    if migrated:
-        print(f"  [ok] Migrated {migrated} chat session(s) to 127.0.0.1 proxy URL")
-except Exception as e:
-    print(f"Error seeding database: {e}")
-    db.rollback()
-finally:
-    db.close()
-`;
-
-  const seedScriptPath = path.join(odysseusDir, 'seed_portable.py');
-  fs.writeFileSync(seedScriptPath, seedScript, 'utf8');
-  execSync(`"${pythonExe}" seed_portable.py`, { cwd: odysseusDir, stdio: 'inherit' });
-  fs.unlinkSync(seedScriptPath);
-
   // Configure Cookbook default directories to point to our portable folder
   configureCookbookState(odysseusDir, projectRoot);
 
-  // Step 8: Spawn llama-server subprocess
-  console.log('\n[Inference] Starting llama-server on port 10086...');
-  let ngl = 0;
-  if (hw.gpuBackend === 'cuda' || hw.gpuBackend === 'vulkan' || hw.gpuBackend === 'metal') {
-    ngl = 99;
-    console.log(`[Inference] GPU acceleration enabled (offloading all layers via -ngl 99).`);
-  } else {
-    console.log(`[Inference] Running on CPU (0 layers offloaded).`);
-  }
-
-  const envPath = llamaDir + path.delimiter + process.env.PATH;
-  const llamaLog = fs.createWriteStream(path.join(logsDir, 'llama.log'), { flags: 'w' });
-
-  const llamaProcess = spawn(llamaExePath, [
-    '--port', '10086',
-    '--model', modelSelection.path,
-    '--ctx-size', '16384',
-    '--threads', '4',
-    '-ngl', String(ngl)
-  ], {
-    cwd: projectRoot,
-    env: { ...process.env, PATH: envPath },
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-
-  llamaProcess.stdout.pipe(llamaLog);
-  llamaProcess.stderr.pipe(llamaLog);
-
-  // Step 9: Start headless API proxy
-  const proxyServer = startProxy(8080, 10086);
-
-  // Step 10: Wait for llama-server to bind
-  console.log('[Inference] Waiting for llama-server to initialize...');
-  await waitPort(10086);
-  console.log('[Inference] llama-server is ready and listening.');
+  console.log(`[Inference] Selected backend: ${backendChoice === 'ollama' ? 'Ollama' : 'llama.cpp'}`);
+  const backendContext = {
+    binDir,
+    logsDir,
+    modelsDir,
+    odysseusDir,
+    projectRoot,
+    pythonExe,
+    waitPort,
+    isPortOpen,
+    launcherConfig: loadLauncherConfig(),
+    saveLauncherConfig,
+    combinedLogStream,
+    combinedLogPath
+  };
+  const backend = backendChoice === 'ollama'
+    ? await startOllamaBackend(backendContext)
+    : await startLlamaBackend(backendContext);
 
   // Step 11: Spawn Odysseus web server subprocess
   console.log('[Odysseus] Starting Odysseus server on port 7000...');
-  const odysseusLog = fs.createWriteStream(path.join(logsDir, 'odysseus.log'), { flags: 'w' });
+  const odysseusEnv = {
+    ...process.env,
+    ...(backend.env || {}),
+    PATH: path.join(binDir, 'llama') + path.delimiter + ((backend.env && backend.env.PATH) || process.env.PATH || '')
+  };
   
   const odysseusProcess = spawn(pythonExe, [
     '-m', 'uvicorn', 'app:app',
@@ -699,12 +947,12 @@ finally:
     '--port', '7000'
   ], {
     cwd: odysseusDir,
-    env: { ...process.env, PATH: envPath },
+    env: odysseusEnv,
     stdio: ['ignore', 'pipe', 'pipe']
   });
 
-  odysseusProcess.stdout.pipe(odysseusLog);
-  odysseusProcess.stderr.pipe(odysseusLog);
+  odysseusProcess.stdout.pipe(combinedLogStream, { end: false });
+  odysseusProcess.stderr.pipe(combinedLogStream, { end: false });
 
   // Step 12: Wait for Odysseus server to bind
   console.log('[Odysseus] Waiting for web application to start up...');
@@ -723,38 +971,103 @@ finally:
 
   // Handle process shutdown
   let isExiting = false;
-  const shutdown = () => {
+  const shutdown = (exitCode = 0) => {
     if (isExiting) return;
     isExiting = true;
     console.log('\n[Orchestrator] Gracefully shutting down servers...');
+    if (typeof backend !== 'undefined' && backend && backend.processes) {
+      for (const item of backend.processes) {
+        try {
+          item.process.kill();
+        } catch (e) {}
+      }
+    }
+    if (typeof odysseusProcess !== 'undefined' && odysseusProcess) {
+      try {
+        odysseusProcess.kill();
+      } catch (e) {}
+    }
+    if (typeof backend !== 'undefined' && backend && backend.servers) {
+      for (const item of backend.servers) {
+        try {
+          item.server.close();
+        } catch (e) {}
+      }
+    }
+    
+    if (typeof restoreStdoutStderr === 'function') {
+      restoreStdoutStderr();
+    }
     try {
-      llamaProcess.kill();
+      combinedLogStream.end();
     } catch (e) {}
-    try {
-      odysseusProcess.kill();
-    } catch (e) {}
-    try {
-      proxyServer.close();
-    } catch (e) {}
+
     console.log('[Orchestrator] Shutdown complete. Goodbye!');
-    process.exit(0);
+    process.exit(exitCode);
   };
 
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
-  process.on('exit', shutdown);
-
-  llamaProcess.on('exit', (code) => {
+  process.on('SIGINT', () => shutdown(0));
+  process.on('SIGTERM', () => shutdown(0));
+  process.on('exit', (code) => {
     if (!isExiting) {
-      console.error(`[Error] llama-server terminated unexpectedly with code ${code}. Check logs/llama.log`);
-      shutdown();
+      isExiting = true;
+      if (typeof backend !== 'undefined' && backend && backend.processes) {
+        for (const item of backend.processes) {
+          try {
+            item.process.kill();
+          } catch (e) {}
+        }
+      }
+      if (typeof odysseusProcess !== 'undefined' && odysseusProcess) {
+        try {
+          odysseusProcess.kill();
+        } catch (e) {}
+      }
+      if (typeof backend !== 'undefined' && backend && backend.servers) {
+        for (const item of backend.servers) {
+          try {
+            item.server.close();
+          } catch (e) {}
+        }
+      }
+      if (typeof restoreStdoutStderr === 'function') {
+        restoreStdoutStderr();
+      }
+      try {
+        combinedLogStream.end();
+      } catch (e) {}
     }
   });
 
+  if (backend && backend.processes) {
+    for (const item of backend.processes) {
+      item.process.on('exit', (code) => {
+        if (!isExiting) {
+          console.error(`[Error] ${item.name} terminated unexpectedly with code ${code}.`);
+          if (typeof restoreStdoutStderr === 'function') {
+            restoreStdoutStderr();
+          }
+          try {
+            combinedLogStream.end();
+          } catch (e) {}
+          printLogTail(combinedLogPath, 40);
+          shutdown(1);
+        }
+      });
+    }
+  }
+
   odysseusProcess.on('exit', (code) => {
     if (!isExiting) {
-      console.error(`[Error] Odysseus server terminated unexpectedly with code ${code}. Check logs/odysseus.log`);
-      shutdown();
+      console.error(`[Error] Odysseus server terminated unexpectedly with code ${code}.`);
+      if (typeof restoreStdoutStderr === 'function') {
+        restoreStdoutStderr();
+      }
+      try {
+        combinedLogStream.end();
+      } catch (e) {}
+      printLogTail(combinedLogPath, 40);
+      shutdown(1);
     }
   });
 }

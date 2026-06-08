@@ -13,6 +13,9 @@ logs/
 *.log
 chrome_error.log
 
+# Local launcher state
+data/launcher_config.json
+
 # Headless Browser Debugging Profile
 chrome-debug-profile/
 

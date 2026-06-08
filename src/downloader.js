@@ -102,6 +102,8 @@ export function extractArchive(archivePath, destDir) {
     execSync(`powershell -Command "Expand-Archive -LiteralPath '${escapedArchive}' -DestinationPath '${escapedDest}' -Force"`, { stdio: 'inherit' });
   } else if (ext === '.gz' || archivePath.endsWith('.tar.gz') || archivePath.endsWith('.tgz')) {
     execSync(`tar -xzf "${archivePath}" -C "${destDir}"`, { stdio: 'inherit' });
+  } else if (archivePath.endsWith('.tar.zst')) {
+    execSync(`tar -xf "${archivePath}" -C "${destDir}"`, { stdio: 'inherit' });
   } else if (ext === '.zip') {
     execSync(`unzip -o "${archivePath}" -d "${destDir}"`, { stdio: 'inherit' });
   } else {
@@ -116,7 +118,7 @@ export function printProgressBar(downloaded, total, prefix = "Downloading: ") {
   const currentMB = (downloaded / (1024 * 1024)).toFixed(1);
   const barLength = 30;
   const progress = Math.min(barLength, Math.round((downloaded / total) * barLength));
-  const bar = "█".repeat(progress) + "░".repeat(barLength - progress);
+  const bar = "#".repeat(progress) + "-".repeat(barLength - progress);
   process.stdout.write(`\r${prefix}[${bar}] ${percent}% (${currentMB}/${totalMB} MB)`);
   if (downloaded >= total) {
     process.stdout.write("\n");

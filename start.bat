@@ -17,9 +17,13 @@ if errorlevel 1 (
 )
 
 echo Starting orchestrator...
-node src/start.js
+node src/start.js %*
 
-if errorlevel 1 (
-    echo [ERROR] Orchestrator exited with an error.
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo ===================================================
+    echo   [ERROR] Orchestrator exited with code %ERRORLEVEL%
+    echo   Please check the logs above or in the 'logs/' folder.
+    echo ===================================================
     pause
 )
