@@ -2,7 +2,7 @@ import https from 'https';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { URL } from 'url';
 
 // Fetch JSON helper
@@ -97,17 +97,25 @@ export function extractArchive(archivePath, destDir) {
   const isWindows = process.platform === 'win32';
   
   if (isWindows && ext === '.zip') {
-    const escapedArchive = archivePath.replace(/'/g, "''");
-    const escapedDest = destDir.replace(/'/g, "''");
-    execSync(`powershell -Command "Expand-Archive -LiteralPath '${escapedArchive}' -DestinationPath '${escapedDest}' -Force"`, { stdio: 'inherit' });
-  } else if (ext === '.gz' || archivePath.endsWith('.tar.gz') || archivePath.endsWith('.tgz')) {
-    execSync(`tar -xzf "${archivePath}" -C "${destDir}"`, { stdio: 'inherit' });
+    execFileSync('powershell.exe', [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      'Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force',
+      archivePath,
+      destDir
+    ], { stdio: 'inherit' });
+  } else if (archivePath.endsWith('.tar.gz') || archivePath.endsWith('.tgz')) {
+    execFileSync('tar', ['-xzf', archivePath, '-C', destDir], { stdio: 'inherit' });
+  } else if (archivePath.endsWith('.tar.xz')) {
+    execFileSync('tar', ['-xJf', archivePath, '-C', destDir], { stdio: 'inherit' });
   } else if (archivePath.endsWith('.tar.zst')) {
-    execSync(`tar -xf "${archivePath}" -C "${destDir}"`, { stdio: 'inherit' });
+    execFileSync('tar', ['-xf', archivePath, '-C', destDir], { stdio: 'inherit' });
   } else if (ext === '.zip') {
-    execSync(`unzip -o "${archivePath}" -d "${destDir}"`, { stdio: 'inherit' });
+    execFileSync('unzip', ['-o', archivePath, '-d', destDir], { stdio: 'inherit' });
   } else {
-    throw new Error(`Unsupported archive format for extraction: ${ext}`);
+    throw new Error(`Unsupported archive format for extraction: ${path.basename(archivePath)}`);
   }
 }
 

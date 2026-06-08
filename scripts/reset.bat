@@ -1,6 +1,8 @@
 @echo off
 setlocal
 
+cd /d "%~dp0\.."
+
 echo =================================================================
 echo          ODYSSEUS PORTABLE - RESET TO FACTORY DEFAULTS
 echo =================================================================
@@ -11,10 +13,12 @@ echo   - odysseus\     (Odysseus web app)
 echo   - logs\         (all log files)
 echo   - chrome-debug-profile\  (browser session data)
 echo   - node_modules\ (Node.js packages)
+echo   - data\bootstrap\ and runtime launcher state
 echo.
 echo The following will be KEPT:
 echo   - models\       (your downloaded models - SAFE)
 echo   - src\          (launcher source code)
+echo   - scripts\      (bootstrap scripts)
 echo   - start.bat / start.sh
 echo   - package.json
 echo   - README.md
@@ -55,6 +59,21 @@ if exist "chrome-debug-profile" (
 if exist "node_modules" (
     echo [Reset] Removing node_modules\ ...
     rmdir /s /q "node_modules"
+)
+
+if exist "data\bootstrap" (
+    echo [Reset] Removing data\bootstrap\ ...
+    rmdir /s /q "data\bootstrap"
+)
+
+if exist "data\runtime.json" (
+    echo [Reset] Removing data\runtime.json ...
+    del /f /q "data\runtime.json"
+)
+
+if exist "data\launcher_config.json" (
+    echo [Reset] Removing data\launcher_config.json ...
+    del /f /q "data\launcher_config.json"
 )
 
 REM --- Recreate empty logs directory ---

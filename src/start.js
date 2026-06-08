@@ -2,12 +2,14 @@ import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
 import { fileURLToPath } from 'url';
-import { execSync, spawn } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import net from 'net';
 
 import { downloadFile, extractArchive, printProgressBar } from './downloader.js';
 import { startLlamaBackend } from './backends/llama/index.js';
 import { startOllamaBackend } from './backends/ollama/index.js';
+import { ensureOdysseusSource } from './bootstrap/git.js';
+import { createRuntimeTracker } from './runtime.js';
 
 // Global error handling to ensure non-zero exit codes on crash
 process.on('uncaughtException', (err) => {
@@ -92,41 +94,21 @@ function getBackendChoice(config) {
   }
   const saved = config?.backend;
   if (saved === 'llama' || saved === 'ollama') return saved;
-  return null; // indicates we need to prompt
+  return 'llama';
 }
 
-// Git clone/sync helper
-function ensureOdysseusCloned(odysseusDir) {
-  if (!fs.existsSync(odysseusDir)) {
-    console.log('[Git] Odysseus repository not found. Cloning...');
-    execSync('git clone https://github.com/pewdiepie-archdaemon/odysseus.git odysseus', {
-      cwd: projectRoot,
-      stdio: 'inherit'
-    });
-    console.log('[Git] Clone completed successfully.');
-  } else {
-    console.log('[Git] Odysseus repository detected. Checking for updates...');
-    try {
-      const generatedPatchFiles = [
-        path.join('routes', 'cookbook_helpers.py'),
-        path.join('routes', 'cookbook_routes.py'),
-        path.join('static', 'js', 'cookbookRunning.js'),
-        path.join('static', 'js', 'cookbook.js'),
-        path.join('static', 'js', 'cookbook-hwfit.js')
-      ];
-      execSync(`git restore -- ${generatedPatchFiles.map(file => `"${file}"`).join(' ')}`, {
-        cwd: odysseusDir,
-        stdio: 'ignore'
-      });
-      execSync('git pull', {
-        cwd: odysseusDir,
-        stdio: 'inherit'
-      });
-      console.log('[Git] Repository synced successfully.');
-    } catch (err) {
-      console.warn('[Git Warning] Failed to run git pull (offline or network issue). Continuing with local version.');
-    }
-  }
+const generatedPatchFiles = [
+  path.join('routes', 'cookbook_helpers.py'),
+  path.join('routes', 'cookbook_routes.py'),
+  path.join('static', 'js', 'cookbookRunning.js'),
+  path.join('static', 'js', 'cookbook.js'),
+  path.join('static', 'js', 'cookbook-hwfit.js')
+];
+
+function cookbookPlatform() {
+  if (process.platform === 'win32') return 'windows';
+  if (process.platform === 'darwin') return 'macos';
+  return 'linux';
 }
 
 // Self-healing patch for cookbook_helpers.py to support Windows Scripts directory
@@ -317,8 +299,8 @@ function patchCookbookWindowsLlamaServer(odysseusDir) {
   }
 }
 
-// Self-healing patch for router VRAM pressure. A 16k default context can make
-// 8B/9B GGUF models fail on 15 GB GPUs when the KV cache is allocated.
+// Self-healing patch for router context defaults. Keep one larger chat slot
+// instead of several small parallel slots so normal chat prompts fit.
 function patchLlamaRouterContext(projectRoot) {
   const llamaBackendPath = path.join(projectRoot, 'src', 'backends', 'llama', 'index.js');
   if (fs.existsSync(llamaBackendPath)) {
@@ -326,8 +308,8 @@ function patchLlamaRouterContext(projectRoot) {
       let content = fs.readFileSync(llamaBackendPath, 'utf8');
       const target = /'--ctx-size', '16384'/g;
       if (target.test(content)) {
-        console.log('[Odysseus] Patching llama router context to 4096...');
-        content = content.replace(target, "'--ctx-size', '4096'");
+        console.log('[Odysseus] Patching llama router context to 12288...');
+        content = content.replace(target, "'--ctx-size', '12288'");
         fs.writeFileSync(llamaBackendPath, content, 'utf8');
         console.log('[Odysseus] Llama router context successfully patched.');
       }
@@ -428,6 +410,7 @@ function configureCookbookState(odysseusDir, projectRoot) {
   const statePath = path.join(odysseusDir, 'data', 'cookbook_state.json');
   const modelsDirAbs = path.resolve(projectRoot, 'models');
   const modelsDirPosix = modelsDirAbs.replace(/\\/g, '/');
+  const platformName = cookbookPlatform();
   
   // Ensure the data directory exists
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
@@ -452,11 +435,11 @@ function configureCookbookState(odysseusDir, projectRoot) {
           ],
           modelDir: modelsDirPosix,
           downloadDir: modelsDirPosix,
-          platform: "windows"
+          platform: platformName
         }
       ],
       modelPaths: [],
-      platform: "windows",
+      platform: platformName,
       defaultServer: ""
     },
     serveState: {
@@ -481,7 +464,7 @@ function configureCookbookState(odysseusDir, projectRoot) {
               modelDirs: [modelsDirPosix],
               modelDir: modelsDirPosix,
               downloadDir: modelsDirPosix,
-              platform: "windows"
+              platform: platformName
             }
           ];
         }
@@ -491,7 +474,9 @@ function configureCookbookState(odysseusDir, projectRoot) {
           localServer.downloadDir = modelsDirPosix;
           localServer.modelDirs = [modelsDirPosix];
           localServer.modelDir = modelsDirPosix;
+          localServer.platform = platformName;
         }
+        state.env.platform = platformName;
       }
     } catch (err) {
       console.warn('[Odysseus Warning] Failed to parse existing cookbook_state.json, recreating: ', err.message);
@@ -554,7 +539,7 @@ async function setupWindowsPython(odysseusDir) {
   });
 
   console.log('[Python] Installing pip...');
-  execSync(`"${pythonExe}" "${pipScriptPath}" --no-warn-script-location -q`, { stdio: 'inherit' });
+  execFileSync(pythonExe, [pipScriptPath, '--no-warn-script-location', '-q'], { stdio: 'inherit' });
   fs.unlinkSync(pipScriptPath);
 
   // Mock venv module for HuggingFace library compatibility
@@ -633,7 +618,7 @@ async function setupUnixPython(odysseusDir) {
 
   if (!fs.existsSync(envDir)) {
     console.log(`[Python/UV] Creating virtual environment at envs/${envName}...`);
-    execSync(`"${uvPath}" venv "${envDir}" --python 3.12 --quiet`, { stdio: 'inherit' });
+    execFileSync(uvPath, ['venv', envDir, '--python', '3.12', '--quiet'], { stdio: 'inherit' });
   }
 
   return pythonPath;
@@ -738,46 +723,6 @@ function cleanLogsFolder(logsDir) {
   }
 }
 
-// Forcefully kill any process occupying target ports to avoid EADDRINUSE errors
-function killProcessOnPort(port) {
-  try {
-    if (process.platform === 'win32') {
-      const output = execSync('netstat -ano', { encoding: 'utf8' });
-      const lines = output.split('\n');
-      const pids = new Set();
-      for (const line of lines) {
-        if (line.includes(`:${port}`) && line.includes('LISTENING')) {
-          const parts = line.trim().split(/\s+/);
-          const pid = parts[parts.length - 1];
-          if (pid && pid !== '0') {
-            pids.add(pid);
-          }
-        }
-      }
-      for (const pid of pids) {
-        console.log(`[Orchestrator] Port ${port} is in use. Terminating process PID ${pid}...`);
-        try {
-          execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
-        } catch (e) {}
-      }
-    } else {
-      try {
-        const pids = execSync(`lsof -t -i :${port}`, { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
-        for (const pid of pids) {
-          console.log(`[Orchestrator] Port ${port} is in use. Terminating process PID ${pid}...`);
-          try {
-            execSync(`kill -9 ${pid}`, { stdio: 'ignore' });
-          } catch (e) {}
-        }
-      } catch (e) {
-        try {
-          execSync(`fuser -k ${port}/tcp`, { stdio: 'ignore' });
-        } catch (err) {}
-      }
-    }
-  } catch (err) {}
-}
-
 // Main Orchestrator Flow
 async function main() {
   // Clean logs folder first
@@ -818,13 +763,17 @@ async function main() {
 
   printHeader();
 
-  // Clean up any orphan servers running on our target ports
-  killProcessOnPort(8080);
-  killProcessOnPort(10086);
-  killProcessOnPort(7000);
-
   // Ensure data directory exists for config loading/saving
   fs.mkdirSync(path.join(projectRoot, 'data'), { recursive: true });
+  const runtimeTracker = createRuntimeTracker(projectRoot);
+  runtimeTracker.cleanupPrevious();
+  runtimeTracker.cleanupOwnedPortProcesses([8080, 10086, 7000]);
+
+  for (const port of [8080, 10086, 7000]) {
+    if (await isPortOpen(port)) {
+      throw new Error(`Port ${port} is already in use by a process not tracked by this portable launcher. Close that process or change its port, then restart Odysseus Portable.`);
+    }
+  }
 
   const launcherConfig = loadLauncherConfig();
   let backendChoice = getBackendChoice(launcherConfig);
@@ -856,7 +805,12 @@ async function main() {
   fs.mkdirSync(modelsDir, { recursive: true });
   fs.mkdirSync(logsDir, { recursive: true });
   
-  ensureOdysseusCloned(odysseusDir);
+  await ensureOdysseusSource({
+    projectRoot,
+    odysseusDir,
+    binDir,
+    patchFiles: generatedPatchFiles
+  });
   patchCookbookHelpers(odysseusDir);
   patchCookbookRoutes(odysseusDir);
   patchCookbookStateNormalizer(odysseusDir);
@@ -878,11 +832,11 @@ async function main() {
   console.log('[Python] Verifying package dependencies...');
   if (process.platform === 'win32') {
     try {
-      execSync(`"${pythonExe}" -c "import uvicorn, fastapi, httpx, bcrypt"`, { stdio: 'ignore' });
+      execFileSync(pythonExe, ['-c', 'import uvicorn, fastapi, httpx, bcrypt'], { stdio: 'ignore' });
       console.log('[Python] Package dependencies OK.');
     } catch (e) {
       console.log('[Python] Installing dependencies (this may take a few minutes)...');
-      execSync(`"${pythonExe}" -m pip install -r requirements.txt bcrypt --no-warn-script-location -q`, {
+      execFileSync(pythonExe, ['-m', 'pip', 'install', '-r', 'requirements.txt', 'bcrypt', '--no-warn-script-location', '-q'], {
         cwd: odysseusDir,
         stdio: 'inherit'
       });
@@ -890,7 +844,7 @@ async function main() {
     }
   } else {
     const uvPath = path.join(odysseusDir, 'bin', 'uv');
-    execSync(`"${uvPath}" pip install --python "${pythonExe}" -r requirements.txt bcrypt --quiet`, {
+    execFileSync(uvPath, ['pip', 'install', '--python', pythonExe, '-r', 'requirements.txt', 'bcrypt', '--quiet'], {
       cwd: odysseusDir,
       stdio: 'inherit'
     });
@@ -905,7 +859,7 @@ async function main() {
     ODYSSEUS_ADMIN_PASSWORD: 'techjarves',
     ODYSSEUS_SKIP_RUN_HINT: '1'
   };
-  execSync(`"${pythonExe}" setup.py`, {
+  execFileSync(pythonExe, ['setup.py'], {
     cwd: odysseusDir,
     env: setupEnv,
     stdio: 'inherit'
@@ -927,7 +881,8 @@ async function main() {
     launcherConfig: loadLauncherConfig(),
     saveLauncherConfig,
     combinedLogStream,
-    combinedLogPath
+    combinedLogPath,
+    runtimeTracker
   };
   const backend = backendChoice === 'ollama'
     ? await startOllamaBackend(backendContext)
@@ -953,6 +908,7 @@ async function main() {
 
   odysseusProcess.stdout.pipe(combinedLogStream, { end: false });
   odysseusProcess.stderr.pipe(combinedLogStream, { end: false });
+  runtimeTracker.register('odysseus-web', odysseusProcess, [7000]);
 
   // Step 12: Wait for Odysseus server to bind
   console.log('[Odysseus] Waiting for web application to start up...');
@@ -978,13 +934,13 @@ async function main() {
     if (typeof backend !== 'undefined' && backend && backend.processes) {
       for (const item of backend.processes) {
         try {
-          item.process.kill();
+          runtimeTracker.terminate(item.process.pid);
         } catch (e) {}
       }
     }
     if (typeof odysseusProcess !== 'undefined' && odysseusProcess) {
       try {
-        odysseusProcess.kill();
+        runtimeTracker.terminate(odysseusProcess.pid);
       } catch (e) {}
     }
     if (typeof backend !== 'undefined' && backend && backend.servers) {
@@ -1001,6 +957,7 @@ async function main() {
     try {
       combinedLogStream.end();
     } catch (e) {}
+    runtimeTracker.clear();
 
     console.log('[Orchestrator] Shutdown complete. Goodbye!');
     process.exit(exitCode);
@@ -1014,13 +971,13 @@ async function main() {
       if (typeof backend !== 'undefined' && backend && backend.processes) {
         for (const item of backend.processes) {
           try {
-            item.process.kill();
+            runtimeTracker.terminate(item.process.pid);
           } catch (e) {}
         }
       }
       if (typeof odysseusProcess !== 'undefined' && odysseusProcess) {
         try {
-          odysseusProcess.kill();
+          runtimeTracker.terminate(odysseusProcess.pid);
         } catch (e) {}
       }
       if (typeof backend !== 'undefined' && backend && backend.servers) {
@@ -1036,6 +993,7 @@ async function main() {
       try {
         combinedLogStream.end();
       } catch (e) {}
+      runtimeTracker.clear();
     }
   });
 

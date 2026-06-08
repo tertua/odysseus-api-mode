@@ -1,9 +1,9 @@
 import fs from 'fs';
 import path from 'path';
-import { execSync, spawn } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 
 import { downloadFile, extractArchive, fetchJSON, printProgressBar } from '../../downloader.js';
-import { commandExists, seedPortableEndpoint } from '../common.js';
+import { seedPortableEndpoint } from '../common.js';
 
 const OLLAMA_RELEASE_API = 'https://api.github.com/repos/ollama/ollama/releases/latest';
 
@@ -25,7 +25,6 @@ function findExecutableUnder(dir) {
 function findOllamaExecutable(binDir) {
   const bundled = findExecutableUnder(path.join(binDir, 'ollama'));
   if (bundled) return bundled;
-  if (commandExists('ollama')) return 'ollama';
   return '';
 }
 
@@ -78,7 +77,7 @@ async function ensureOllamaExecutable(binDir) {
 
 function listOllamaModels(ollamaExe, env) {
   try {
-    const output = execSync(`"${ollamaExe}" list`, { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const output = execFileSync(ollamaExe, ['list'], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
     return output
       .split(/\r?\n/)
       .slice(1)
@@ -115,6 +114,7 @@ export async function startOllamaBackend(context) {
       env,
       stdio: ['ignore', 'pipe', 'pipe']
     });
+    context.runtimeTracker?.register('ollama', ollamaProcess, [11434]);
     ollamaProcess.stdout.pipe(logStream, { end: false });
     ollamaProcess.stderr.pipe(logStream, { end: false });
     processes.push({ name: 'ollama', process: ollamaProcess });

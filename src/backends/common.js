@@ -1,10 +1,14 @@
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 export function commandExists(command) {
   try {
-    execSync(process.platform === 'win32' ? `where ${command}` : `command -v ${command}`, { stdio: 'ignore' });
+    if (process.platform === 'win32') {
+      execFileSync('where.exe', [command], { stdio: 'ignore' });
+    } else {
+      execFileSync('sh', ['-c', `command -v "$1"`, 'sh', command], { stdio: 'ignore' });
+    }
     return true;
   } catch {
     return false;
@@ -86,7 +90,7 @@ finally:
   const seedScriptPath = path.join(odysseusDir, 'seed_portable.py');
   fs.writeFileSync(seedScriptPath, seedScript, 'utf8');
   try {
-    execSync(`"${pythonExe}" seed_portable.py`, { cwd: odysseusDir, stdio: 'inherit' });
+    execFileSync(pythonExe, ['seed_portable.py'], { cwd: odysseusDir, stdio: 'inherit' });
   } finally {
     if (fs.existsSync(seedScriptPath)) fs.unlinkSync(seedScriptPath);
   }

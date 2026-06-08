@@ -2,7 +2,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR/.."
 
 echo "================================================================="
 echo "         ODYSSEUS PORTABLE - RESET TO FACTORY DEFAULTS"
@@ -14,10 +14,12 @@ echo "  - odysseus/              (Odysseus web app)"
 echo "  - logs/                  (all log files)"
 echo "  - chrome-debug-profile/  (browser session data)"
 echo "  - node_modules/          (Node.js packages)"
+echo "  - data/bootstrap/ and runtime launcher state"
 echo ""
 echo "The following will be KEPT:"
 echo "  - models/    (your downloaded models - SAFE)"
 echo "  - src/       (launcher source code)"
+echo "  - scripts/   (bootstrap scripts)"
 echo "  - start.bat / start.sh"
 echo "  - package.json"
 echo "  - README.md"
@@ -57,6 +59,21 @@ fi
 if [ -d "node_modules" ]; then
     echo "[Reset] Removing node_modules/ ..."
     rm -rf "node_modules"
+fi
+
+if [ -d "data/bootstrap" ]; then
+    echo "[Reset] Removing data/bootstrap/ ..."
+    rm -rf "data/bootstrap"
+fi
+
+if [ -f "data/runtime.json" ]; then
+    echo "[Reset] Removing data/runtime.json ..."
+    rm -f "data/runtime.json"
+fi
+
+if [ -f "data/launcher_config.json" ]; then
+    echo "[Reset] Removing data/launcher_config.json ..."
+    rm -f "data/launcher_config.json"
 fi
 
 # --- Recreate empty logs directory ---
