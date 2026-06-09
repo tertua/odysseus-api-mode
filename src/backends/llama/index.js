@@ -108,6 +108,22 @@ function chooseAutoContext({ hw, localGgufs, parallel }) {
   };
 }
 
+function findExecutable(dir, exeName) {
+  if (!fs.existsSync(dir)) return '';
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isFile() && entry.name === exeName) {
+      return fullPath;
+    }
+    if (entry.isDirectory()) {
+      const nested = findExecutable(fullPath, exeName);
+      if (nested) return nested;
+    }
+  }
+  return '';
+}
+
 export async function startLlamaBackend(context) {
   const { binDir, logsDir, modelsDir, odysseusDir, projectRoot, pythonExe, waitPort } = context;
 
@@ -116,9 +132,9 @@ export async function startLlamaBackend(context) {
 
   const llamaDir = path.join(binDir, 'llama');
   const exeName = process.platform === 'win32' ? 'llama-server.exe' : 'llama-server';
-  const llamaExePath = path.join(llamaDir, exeName);
+  let llamaExePath = findExecutable(llamaDir, exeName);
 
-  if (!fs.existsSync(llamaExePath)) {
+  if (!llamaExePath) {
     console.log('[Inference] Precompiled llama-server not found. Downloading...');
     fs.mkdirSync(llamaDir, { recursive: true });
 
@@ -149,8 +165,20 @@ export async function startLlamaBackend(context) {
       fs.unlinkSync(secondaryZip);
     }
     console.log('[Inference] Setup complete.');
+    llamaExePath = findExecutable(llamaDir, exeName);
+    if (!llamaExePath) {
+      throw new Error(`Downloaded and extracted llama.cpp asset, but could not find the executable ${exeName} under ${llamaDir}`);
+    }
   } else {
-    console.log('[Inference] Precompiled llama-server detected.');
+    console.log(`[Inference] Precompiled llama-server detected at: ${llamaExePath}`);
+  }
+
+  if (process.platform !== 'win32') {
+    try {
+      fs.chmodSync(llamaExePath, 0o755);
+    } catch (err) {
+      console.warn(`[Inference Warning] Failed to make llama-server executable: ${err.message}`);
+    }
   }
 
   const scanLocalGgufs = (dir, baseDir = dir) => {
@@ -205,7 +233,14 @@ export async function startLlamaBackend(context) {
     console.log('[Inference] Running on CPU (0 layers offloaded).');
   }
 
-  const envPath = llamaDir + path.delimiter + process.env.PATH;
+  const llamaExeDir = path.dirname(llamaExePath);
+  const env = { ...process.env };
+  env.PATH = llamaExeDir + path.delimiter + process.env.PATH;
+  if (process.platform !== 'win32') {
+    env.LD_LIBRARY_PATH = llamaExeDir + (process.env.LD_LIBRARY_PATH ? path.delimiter + process.env.LD_LIBRARY_PATH : '');
+    env.DYLD_LIBRARY_PATH = llamaExeDir + (process.env.DYLD_LIBRARY_PATH ? path.delimiter + process.env.DYLD_LIBRARY_PATH : '');
+  }
+
   const logStream = context.combinedLogStream || fs.createWriteStream(path.join(logsDir, 'llama.log'), { flags: 'w' });
   const parallel = positiveInt(process.env.ODYSSEUS_LLAMA_PARALLEL, 1);
   const selectedContext = chooseAutoContext({ hw, localGgufs, parallel });
@@ -266,7 +301,7 @@ export async function startLlamaBackend(context) {
       '-ngl', String(ngl)
     ], {
       cwd: projectRoot,
-      env: { ...process.env, PATH: envPath },
+      env,
       stdio: ['ignore', 'pipe', 'pipe']
     });
     llamaProcess = proc;
@@ -332,7 +367,8 @@ export async function startLlamaBackend(context) {
 
   return {
     label: 'llama.cpp',
-    env: { ...process.env, PATH: envPath },
+    env,
+    llamaExeDir,
     processes: [{
       name: 'llama-server',
       get process() {

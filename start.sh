@@ -45,15 +45,7 @@ if [ ! -x "$NODE_BIN" ]; then
   rm -rf "$tmp"
   mkdir -p "$tmp" "$NODE_DIR"
   download_file "$url" "$archive"
-  tar -xJf "$archive" -C "$tmp"
-  root="$(find "$tmp" -maxdepth 1 -type d -name 'node-v*' | head -n 1)"
-  if [ -z "$root" ]; then
-    echo "[ERROR] Node archive did not contain a node-v* folder." >&2
-    exit 1
-  fi
-  rm -rf "$NODE_DIR"
-  mkdir -p "$NODE_DIR"
-  cp -R "$root"/. "$NODE_DIR"/
+  tar -xJf "$archive" --strip-components=1 -C "$NODE_DIR"
   chmod +x "$NODE_BIN"
   rm -rf "$tmp"
 fi

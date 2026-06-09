@@ -133,7 +133,7 @@ function patchCookbookHelpers(odysseusDir) {
         }
       }
       const localDirTarget = '_LOCAL_DIR_RE = re.compile(r"^~?/[A-Za-z0-9._/-]*$|^~$")';
-      const localDirReplacement = '_LOCAL_DIR_RE = re.compile(r"^~?/[A-Za-z0-9._/-]*$|^~$|^[A-Za-z]:[\\\\/][A-Za-z0-9._/\\\\\\\\-]*$")';
+      const localDirReplacement = '_LOCAL_DIR_RE = re.compile(r"^~?/[A-Za-z0-9._/ -]*$|^~$|^[A-Za-z]:[\\\\/][A-Za-z0-9._/\\\\\\\\ -]*$")';
       if (content.includes(localDirTarget)) {
         console.log('[Odysseus] Patching cookbook_helpers.py for Windows download directories...');
         content = content.replace(localDirTarget, localDirReplacement);
@@ -143,7 +143,7 @@ function patchCookbookHelpers(odysseusDir) {
         );
         content = content.replace(
           'Invalid local_dir — must be an absolute or ~ path with no spaces or shell metacharacters',
-          'Invalid local_dir — must be an absolute, Windows drive, or ~ path with no spaces or shell metacharacters'
+          'Invalid local_dir — must be an absolute, Windows drive, or ~ path with no shell metacharacters'
         );
         fs.writeFileSync(helpersPath, content, 'utf8');
         console.log('[Odysseus] Windows download directory support successfully patched.');
@@ -888,12 +888,11 @@ async function main() {
     ? await startOllamaBackend(backendContext)
     : await startLlamaBackend(backendContext);
 
-  // Step 11: Spawn Odysseus web server subprocess
-  console.log('[Odysseus] Starting Odysseus server on port 7000...');
+  const llamaExeDir = backend.llamaExeDir || path.join(binDir, 'llama');
   const odysseusEnv = {
     ...process.env,
     ...(backend.env || {}),
-    PATH: path.join(binDir, 'llama') + path.delimiter + ((backend.env && backend.env.PATH) || process.env.PATH || '')
+    PATH: llamaExeDir + path.delimiter + ((backend.env && backend.env.PATH) || process.env.PATH || '')
   };
   
   const odysseusProcess = spawn(pythonExe, [
@@ -912,7 +911,7 @@ async function main() {
 
   // Step 12: Wait for Odysseus server to bind
   console.log('[Odysseus] Waiting for web application to start up...');
-  await waitPort(7000);
+  await waitPort(7000, 180000);
   console.log('[Odysseus] Odysseus is ready and active.');
 
   // Step 13: Open browser window
