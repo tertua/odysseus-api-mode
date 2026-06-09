@@ -140,7 +140,10 @@ export function printProgressBar(downloaded, total, prefix = "Downloading: ") {
 
 // Fetch the best matching llama.cpp asset
 export async function getLlamaCppAssets(hw) {
-  const apiURL = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest";
+  let apiURL = "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest";
+  if (hw.os === 'linux' && hw.gpuBackend === 'cuda') {
+    apiURL = "https://api.github.com/repos/ai-dock/llama.cpp-cuda/releases/latest";
+  }
   const releaseData = await fetchJSON(apiURL);
   const assets = releaseData.assets;
   
@@ -177,7 +180,10 @@ export async function getLlamaCppAssets(hw) {
     }
   } else {
     // Linux
-    if (hw.gpuBackend === 'vulkan') {
+    if (hw.gpuBackend === 'cuda') {
+      const suffix = hw.arch === 'arm64' ? 'arm64.tar.gz' : 'amd64.tar.gz';
+      primaryAsset = assets.find(a => a.name.includes('-cuda-') && a.name.endsWith(suffix));
+    } else if (hw.gpuBackend === 'vulkan') {
       primaryAsset = assets.find(a => a.name.startsWith('llama-') && a.name.includes('bin-ubuntu-vulkan') && a.name.includes('x64') && a.name.endsWith('.tar.gz'));
     } else if (hw.gpuBackend === 'rocm') {
       primaryAsset = assets.find(a => a.name.startsWith('llama-') && a.name.includes('bin-ubuntu-rocm') && a.name.includes('x64') && a.name.endsWith('.tar.gz'));

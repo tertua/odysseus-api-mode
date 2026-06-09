@@ -230,6 +230,33 @@ export async function startLlamaBackend(context) {
     console.log(`[Inference] Precompiled llama-server detected at: ${llamaExePath}`);
   }
 
+  if (process.platform === 'linux' && hw.gpuBackend === 'cuda') {
+    const libDir = path.dirname(llamaExePath);
+    if (!fs.existsSync(path.join(libDir, 'libcudart.so.12'))) {
+      console.log('[Inference] Resolving Linux CUDA 12 runtime dependencies via uv...');
+      try {
+        const uvPath = path.join(odysseusDir, 'bin', 'uv');
+        execSync(`"${uvPath}" pip install --target "${libDir}" nvidia-cuda-runtime-cu12 nvidia-cublas-cu12 nvidia-nccl-cu12 nvidia-cuda-nvrtc-cu12`, { stdio: 'inherit' });
+        
+        const copyLib = (srcSubdir, libName) => {
+          const src = path.join(libDir, srcSubdir, 'lib', libName);
+          const dest = path.join(libDir, libName);
+          if (fs.existsSync(src)) {
+            fs.copyFileSync(src, dest);
+          }
+        };
+        copyLib('nvidia/cuda_runtime', 'libcudart.so.12');
+        copyLib('nvidia/cuda_nvrtc', 'libnvrtc.so.12');
+        copyLib('nvidia/cublas', 'libcublas.so.12');
+        copyLib('nvidia/cublas', 'libcublasLt.so.12');
+        copyLib('nvidia/nccl', 'libnccl.so.2');
+        console.log('[Inference] CUDA runtime dependencies resolved successfully.');
+      } catch (err) {
+        console.warn(`[Inference Warning] Failed to automatically resolve CUDA libraries: ${err.message}`);
+      }
+    }
+  }
+
   if (process.platform !== 'win32') {
     try {
       fs.chmodSync(llamaExePath, 0o755);
