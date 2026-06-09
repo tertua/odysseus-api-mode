@@ -20,47 +20,94 @@ function isRetryableMemoryError(statusCode, body) {
   );
 }
 
-function startProxy(localPort, router) {
+function startProxy(localPort, router, modelMapping = {}) {
   const server = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', chunk => chunks.push(chunk));
-    req.on('end', () => forwardRequest(Buffer.concat(chunks), false));
+    req.on('end', () => {
+      const originalBody = Buffer.concat(chunks);
 
-    const forwardRequest = (body, retried) => {
-    const options = {
-      hostname: '127.0.0.1',
-      port: router.port,
-      path: req.url,
-      method: req.method,
-      headers: req.headers
-    };
-    if (body.length) options.headers['content-length'] = body.length;
-
-    const proxyReq = http.request(options, (proxyRes) => {
-      if (proxyRes.statusCode < 500) {
-      res.writeHead(proxyRes.statusCode, proxyRes.headers);
-      proxyRes.pipe(res, { end: true });
+      const parsedUrl = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
+      const pathname = parsedUrl.pathname.replace(/\/+$/, '');
+      if (req.method === 'GET' && (pathname === '/v1/models' || pathname === '/models')) {
+        const modelsList = Object.keys(modelMapping).map(id => ({
+          id: id,
+          object: 'model',
+          created: Math.floor(Date.now() / 1000),
+          owned_by: 'llama.cpp'
+        }));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ object: 'list', data: modelsList }));
         return;
       }
-      const errorChunks = [];
-      proxyRes.on('data', chunk => errorChunks.push(chunk));
-      proxyRes.on('end', async () => {
-        const errorBody = Buffer.concat(errorChunks);
-        if (!retried && isRetryableMemoryError(proxyRes.statusCode, errorBody) && await router.retryLowerContext()) {
-          forwardRequest(body, true);
+
+      let finalBody = originalBody;
+      const contentType = req.headers['content-type'] || '';
+      if (req.method === 'POST' && contentType.includes('application/json') && originalBody.length > 0) {
+        try {
+          const parsed = JSON.parse(originalBody.toString());
+          if (parsed && parsed.model && modelMapping[parsed.model]) {
+            const mappedModel = modelMapping[parsed.model];
+            console.log(`[Proxy] Rewriting model parameter: '${parsed.model}' -> '${mappedModel}'`);
+            parsed.model = mappedModel;
+            finalBody = Buffer.from(JSON.stringify(parsed));
+          }
+        } catch (e) {
+          // Keep original body if parsing failed
+        }
+      }
+
+      forwardRequest(finalBody, false);
+    });
+
+    const forwardRequest = (body, retried) => {
+      const options = {
+        hostname: '127.0.0.1',
+        port: router.port,
+        path: req.url,
+        method: req.method,
+        headers: { ...req.headers }
+      };
+      if (body.length) {
+        options.headers['content-length'] = body.length;
+      }
+
+      let onClose;
+      const proxyReq = http.request(options, (proxyRes) => {
+        if (proxyRes.statusCode < 500) {
+          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          proxyRes.pipe(res, { end: true });
           return;
         }
-        res.writeHead(proxyRes.statusCode, proxyRes.headers);
-        res.end(errorBody);
+        const errorChunks = [];
+        proxyRes.on('data', chunk => errorChunks.push(chunk));
+        proxyRes.on('end', async () => {
+          if (onClose) res.off('close', onClose);
+          const errorBody = Buffer.concat(errorChunks);
+          if (!retried && isRetryableMemoryError(proxyRes.statusCode, errorBody) && await router.retryLowerContext()) {
+            forwardRequest(body, true);
+            return;
+          }
+          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          res.end(errorBody);
+        });
       });
-    });
 
-    proxyReq.on('error', () => {
-      res.writeHead(502, { 'Content-Type': 'text/plain' });
-      res.end(`Bad Gateway: Failed to connect to llama-server on port ${router.port}`);
-    });
+      onClose = () => {
+        if (!res.writableEnded) {
+          proxyReq.destroy();
+        }
+      };
+      res.on('close', onClose);
 
-    proxyReq.end(body);
+      proxyReq.on('error', (err) => {
+        if (onClose) res.off('close', onClose);
+        if (res.writableEnded || res.destroyed) return;
+        res.writeHead(502, { 'Content-Type': 'text/plain' });
+        res.end(`Bad Gateway: Failed to connect to llama-server on port ${router.port}`);
+      });
+
+      proxyReq.end(body);
     };
   });
 
@@ -217,20 +264,70 @@ export async function startLlamaBackend(context) {
     return found;
   };
 
+  // Clean up any stale symlinks at the top-level of modelsDir before scanning
+  if (fs.existsSync(modelsDir)) {
+    try {
+      const entries = fs.readdirSync(modelsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isSymbolicLink()) {
+          const fullPath = path.join(modelsDir, entry.name);
+          try {
+            const target = fs.readlinkSync(fullPath);
+            if (target.startsWith('hub/') || target.startsWith('xet/') || target.startsWith('hub\\') || target.startsWith('xet\\')) {
+              fs.unlinkSync(fullPath);
+            }
+          } catch (e) {
+            fs.unlinkSync(fullPath);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[Inference Warning] Failed to clean up stale symlinks: ${err.message}`);
+    }
+  }
+
   const localGgufs = scanLocalGgufs(modelsDir);
   const modelNames = new Set();
+  const modelMapping = {};
   localGgufs.forEach(m => {
     const pathParts = m.relPath.replace(/\\/g, '/').split('/');
+    let folderName;
     if (pathParts.length > 1) {
       // For HF hub caches, the structure is usually hub/models--repo--name/...
-      let folderName = pathParts[0];
-      if (folderName === 'hub' && pathParts.length > 2) {
+      const prefix = pathParts[0];
+      if (prefix === 'hub' && pathParts.length > 2) {
         folderName = pathParts[1].replace(/^models--/, '').replace(/--/g, '/');
+      } else {
+        folderName = prefix;
       }
-      modelNames.add(folderName);
     } else {
-      modelNames.add(m.file.replace(/\.gguf$/i, ''));
+      folderName = m.file.replace(/\.gguf$/i, '');
     }
+
+    // Determine symlink flat name for nested files
+    let targetModelPath = m.relPath.replace(/\\/g, '/');
+    if (pathParts.length > 1) {
+      const flatName = folderName.replace(/\//g, '--') + '.gguf';
+      const symlinkPath = path.join(modelsDir, flatName);
+      try {
+        if (fs.existsSync(symlinkPath)) {
+          fs.unlinkSync(symlinkPath);
+        }
+        fs.symlinkSync(m.relPath, symlinkPath);
+        console.log(`[Inference] Created flat symlink for nested model: ${flatName} -> ${m.relPath}`);
+        targetModelPath = flatName;
+      } catch (err) {
+        console.warn(`[Inference Warning] Failed to create symlink: ${err.message}`);
+      }
+    }
+
+    const targetModelId = targetModelPath.replace(/\.gguf$/i, '');
+    modelNames.add(folderName);
+    modelMapping[folderName] = targetModelId;
+    
+    // Also map the exact filename (without extension) as a fallback
+    const fileBase = m.file.replace(/\.gguf$/i, '');
+    modelMapping[fileBase] = targetModelId;
   });
   const modelsToSeed = Array.from(modelNames);
 
@@ -380,7 +477,7 @@ export async function startLlamaBackend(context) {
     }
   };
 
-  const proxyServer = startProxy(8080, router);
+  const proxyServer = startProxy(8080, router, modelMapping);
 
   console.log('[Inference] Waiting for llama-server to initialize...');
   console.log('[Inference] llama-server is ready and listening.');

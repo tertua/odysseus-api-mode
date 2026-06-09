@@ -253,11 +253,24 @@ function patchCookbookPortableServeScan(odysseusDir) {
         '    ]',
         '    if not model_dirs:',
         '        lines.append("for _hf_cache in hf_cache_paths(): scan_hf(_hf_cache)")',
-        '    for model_dir in model_dirs or []:'
+        '    for model_dir in model_dirs or []:',
+        '        lines.append(f"if os.path.isdir(os.path.join(os.path.expanduser({model_dir!r}), \'hub\')): scan_hf(os.path.join(os.path.expanduser({model_dir!r}), \'hub\'))")',
+        '        lines.append(f"if os.path.isdir(os.path.join(os.path.expanduser({model_dir!r}), \'xet\')): scan_hf(os.path.join(os.path.expanduser({model_dir!r}), \'xet\'))")'
       ].join('\n');
+      let patched = false;
       if (target.test(content)) {
         console.log('[Odysseus] Patching Cookbook Serve scan to prefer portable model dirs...');
         content = content.replace(target, replacement);
+        patched = true;
+      }
+      const scanDirTarget = '"        if d.startswith(\'models--\'): continue",';
+      const scanDirReplacement = '"        if d.startswith(\'models--\'): continue",\n        "        if d in (\'hub\', \'xet\'): continue",';
+      if (content.includes(scanDirTarget)) {
+        console.log('[Odysseus] Patching Cookbook Serve scan_dir to ignore hub and xet...');
+        content = content.replace(scanDirTarget, scanDirReplacement);
+        patched = true;
+      }
+      if (patched) {
         fs.writeFileSync(helpersPath, content, 'utf8');
         console.log('[Odysseus] Cookbook Serve scan successfully patched.');
       }
