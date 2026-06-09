@@ -291,25 +291,35 @@ export async function startLlamaBackend(context) {
     return found;
   };
 
-  // Clean up any stale symlinks at the top-level of modelsDir before scanning
+  // Clean up any stale symlinks and hardlinks at the top-level of modelsDir before scanning
   if (fs.existsSync(modelsDir)) {
     try {
       const entries = fs.readdirSync(modelsDir, { withFileTypes: true });
       for (const entry of entries) {
+        const fullPath = path.join(modelsDir, entry.name);
         if (entry.isSymbolicLink()) {
-          const fullPath = path.join(modelsDir, entry.name);
           try {
             const target = fs.readlinkSync(fullPath);
-            if (target.startsWith('hub/') || target.startsWith('xet/') || target.startsWith('hub\\') || target.startsWith('xet\\')) {
+            if (target.startsWith('hub/') || target.startsWith('xet/') || target.startsWith('hub\\') || target.startsWith('xet\\') || entry.name.includes('--')) {
               fs.unlinkSync(fullPath);
             }
           } catch (e) {
             fs.unlinkSync(fullPath);
           }
+        } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.gguf') && entry.name.includes('--')) {
+          // Clean up flat hardlink files safely. If it has multiple links, it's a hardlink
+          try {
+            const stat = fs.statSync(fullPath);
+            if (stat.nlink > 1) {
+              fs.unlinkSync(fullPath);
+            }
+          } catch (e) {
+            // ignore
+          }
         }
       }
     } catch (err) {
-      console.warn(`[Inference Warning] Failed to clean up stale symlinks: ${err.message}`);
+      console.warn(`[Inference Warning] Failed to clean up stale links: ${err.message}`);
     }
   }
 
@@ -337,14 +347,23 @@ export async function startLlamaBackend(context) {
       const flatName = folderName.replace(/\//g, '--') + '.gguf';
       const symlinkPath = path.join(modelsDir, flatName);
       try {
-        if (fs.existsSync(symlinkPath)) {
+        try {
           fs.unlinkSync(symlinkPath);
+        } catch (e) {
+          // ignore
         }
-        fs.symlinkSync(m.relPath, symlinkPath);
-        console.log(`[Inference] Created flat symlink for nested model: ${flatName} -> ${m.relPath}`);
+        
+        try {
+          fs.symlinkSync(m.relPath, symlinkPath);
+          console.log(`[Inference] Created flat symlink for nested model: ${flatName} -> ${m.relPath}`);
+        } catch (symErr) {
+          // Fallback to hard link on Windows or environments where symlinks are restricted
+          fs.linkSync(m.path, symlinkPath);
+          console.log(`[Inference] Created flat hard link for nested model: ${flatName} -> ${m.relPath}`);
+        }
         targetModelPath = flatName;
       } catch (err) {
-        console.warn(`[Inference Warning] Failed to create symlink: ${err.message}`);
+        console.warn(`[Inference Warning] Failed to create link: ${err.message}`);
       }
     }
 
