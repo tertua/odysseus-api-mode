@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
 import { fileURLToPath } from 'url';
-import { execFileSync, spawn } from 'child_process';
+import { execFileSync, spawn, execSync } from 'child_process';
 import net from 'net';
 
 import { downloadFile, extractArchive, printProgressBar } from './downloader.js';
@@ -405,6 +405,86 @@ function patchCookbookOllamaDropdown(odysseusDir) {
   }
 }
 
+// Self-healing patch for Local server download directory resolution
+function patchCookbookLocalServerFix(odysseusDir) {
+  const cookbookJsPath = path.join(odysseusDir, 'static', 'js', 'cookbook.js');
+  if (fs.existsSync(cookbookJsPath)) {
+    try {
+      let content = fs.readFileSync(cookbookJsPath, 'utf8');
+      
+      const targetByVal = "if (val == null || val === 'local' || val === '') return null;";
+      const replaceByVal = `if (val == null) return null;
+  if (val === 'local' || val === '') {
+    return _envState.servers.find(x => x.name === 'Local' || x.host === '' || x.host === 'local') || null;
+  }`;
+
+      const targetSelected = "if (_envState.remoteHost) return _envState.servers.find(s => s.host === _envState.remoteHost) || null;\\n  return null;";
+      const replaceSelected = `if (_envState.remoteHost) return _envState.servers.find(s => s.host === _envState.remoteHost) || null;
+  return _envState.servers.find(s => !s.host || s.host === 'local' || s.name === 'Local') || null;`;
+
+      let patched = false;
+      if (content.includes("if (val == null || val === 'local' || val === '') return null;")) {
+        content = content.replace("if (val == null || val === 'local' || val === '') return null;", replaceByVal);
+        patched = true;
+      }
+      
+      if (content.includes("if (_envState.remoteHost) return _envState.servers.find(s => s.host === _envState.remoteHost) || null;\\n  return null;")) {
+        content = content.replace("if (_envState.remoteHost) return _envState.servers.find(s => s.host === _envState.remoteHost) || null;\\n  return null;", replaceSelected);
+        patched = true;
+      }
+
+      // Handle \n matching cleanly
+      const targetSelectedRegex = /if \(_envState\.remoteHost\) return _envState\.servers\.find\(s => s\.host === _envState\.remoteHost\) \|\| null;\s*return null;/;
+      if (targetSelectedRegex.test(content)) {
+        content = content.replace(targetSelectedRegex, replaceSelected);
+        patched = true;
+      }
+
+      if (patched) {
+        fs.writeFileSync(cookbookJsPath, content, 'utf8');
+        console.log('[Odysseus] Patching cookbook.js to fix local server directory resolution...');
+      }
+    } catch (err) {
+      console.warn('[Odysseus Warning] Failed to patch cookbook.js local server fix:', err.message);
+    }
+  }
+}
+
+// Self-healing patch for Backend Download Directory Fallback
+function patchCookbookRoutesBackendFallback(odysseusDir) {
+  const routesPath = path.join(odysseusDir, 'routes', 'cookbook_routes.py');
+  if (fs.existsSync(routesPath)) {
+    try {
+      let content = fs.readFileSync(routesPath, 'utf8');
+      const targetStr = "        _validate_remote_host(req.remote_host)\n        req.ssh_port = _validate_ssh_port(req.ssh_port)\n        req.local_dir = _validate_local_dir(req.local_dir)";
+      const replacementStr = `        _validate_remote_host(req.remote_host)
+        req.ssh_port = _validate_ssh_port(req.ssh_port)
+        
+        # Self-healing fallback: If UI cache sends no local_dir for a local download, read from state
+        if not is_ollama_download and not req.local_dir and not req.remote_host:
+            try:
+                if _cookbook_state_path.exists():
+                    _state = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
+                    _srvs = _state.get("env", {}).get("servers", [])
+                    if _srvs and _srvs[0].get("downloadDir"):
+                        req.local_dir = _srvs[0]["downloadDir"]
+            except Exception:
+                pass
+
+        req.local_dir = _validate_local_dir(req.local_dir)`;
+      
+      if (content.includes("req.ssh_port = _validate_ssh_port(req.ssh_port)\n        req.local_dir = _validate_local_dir(req.local_dir)")) {
+        console.log('[Odysseus] Patching cookbook_routes.py to enforce local_dir backend fallback...');
+        content = content.replace(targetStr, replacementStr);
+        fs.writeFileSync(routesPath, content, 'utf8');
+        console.log('[Odysseus] cookbook_routes.py successfully patched.');
+      }
+    } catch (err) {
+      console.warn('[Odysseus Warning] Failed to patch cookbook_routes.py fallback:', err.message);
+    }
+  }
+}
+
 // Automatically configure Cookbook state to default to the portable models directory
 function configureCookbookState(odysseusDir, projectRoot) {
   const statePath = path.join(odysseusDir, 'data', 'cookbook_state.json');
@@ -624,6 +704,65 @@ async function setupUnixPython(odysseusDir) {
   return pythonPath;
 }
 
+// Setup portable tmux for macOS/Linux background services
+async function setupTmux(odysseusDir) {
+  const platform = process.platform;
+  const arch = process.arch;
+  
+  if (platform === 'win32') return;
+
+  let tmuxUrl = '';
+  if (platform === 'darwin') {
+    tmuxUrl = arch === 'arm64' 
+      ? 'https://github.com/tmux/tmux-builds/releases/download/v3.6b/tmux-3.6b-macos-arm64.tar.gz'
+      : 'https://github.com/tmux/tmux-builds/releases/download/v3.6b/tmux-3.6b-macos-x86_64.tar.gz';
+  } else if (platform === 'linux') {
+    tmuxUrl = arch === 'arm64' || arch === 'aarch64'
+      ? 'https://github.com/tmux/tmux-builds/releases/download/v3.6b/tmux-3.6b-linux-arm64.tar.gz'
+      : 'https://github.com/tmux/tmux-builds/releases/download/v3.6b/tmux-3.6b-linux-x86_64.tar.gz';
+  } else {
+    return;
+  }
+
+  const oBinDir = path.join(odysseusDir, 'bin');
+  fs.mkdirSync(oBinDir, { recursive: true });
+  const tmuxPath = path.join(oBinDir, 'tmux');
+
+  if (!fs.existsSync(tmuxPath)) {
+    console.log(`[Dependencies] Downloading portable tmux binary for ${platform} (${arch})...`);
+    const tmuxTarPath = path.join(oBinDir, 'tmux.tar.gz');
+    await downloadFile(tmuxUrl, tmuxTarPath, (downloaded, total) => {
+      printProgressBar(downloaded, total, 'Downloading tmux: ');
+    });
+
+    console.log('[Dependencies] Extracting tmux binary...');
+    const tempExtractDir = path.join(oBinDir, 'tmux_temp');
+    fs.mkdirSync(tempExtractDir, { recursive: true });
+    extractArchive(tmuxTarPath, tempExtractDir);
+
+    const findAndCopyTmux = (dir) => {
+      const files = fs.readdirSync(dir);
+      for (const file of files) {
+        const fullPath = path.join(dir, file);
+        if (fs.statSync(fullPath).isDirectory()) {
+          findAndCopyTmux(fullPath);
+        } else if (file === 'tmux') {
+          fs.copyFileSync(fullPath, tmuxPath);
+          fs.chmodSync(tmuxPath, 0o755);
+          if (platform === 'darwin') {
+            try {
+              execSync(`xattr -r -d com.apple.quarantine "${tmuxPath}"`, { stdio: 'ignore' });
+            } catch (e) {}
+          }
+        }
+      }
+    };
+    findAndCopyTmux(tempExtractDir);
+    fs.rmSync(tempExtractDir, { recursive: true, force: true });
+    fs.unlinkSync(tmuxTarPath);
+  }
+}
+
 // TCP Port readiness check helper
 function waitPort(port, timeoutMs = 60000) {
   return new Promise((resolve, reject) => {
@@ -767,9 +906,9 @@ async function main() {
   fs.mkdirSync(path.join(projectRoot, 'data'), { recursive: true });
   const runtimeTracker = createRuntimeTracker(projectRoot);
   runtimeTracker.cleanupPrevious();
-  runtimeTracker.cleanupOwnedPortProcesses([8080, 10086, 7000]);
+  runtimeTracker.cleanupOwnedPortProcesses([8080, 10086, 7070]);
 
-  for (const port of [8080, 10086, 7000]) {
+  for (const port of [8080, 10086, 7070]) {
     if (await isPortOpen(port)) {
       throw new Error(`Port ${port} is already in use by a process not tracked by this portable launcher. Close that process or change its port, then restart Odysseus Portable.`);
     }
@@ -819,6 +958,8 @@ async function main() {
   patchLlamaRouterContext(projectRoot);
   patchCookbookCachedRoutePortableFallback(odysseusDir);
   patchCookbookOllamaDropdown(odysseusDir);
+  patchCookbookLocalServerFix(odysseusDir);
+  patchCookbookRoutesBackendFallback(odysseusDir);
 
   // Step 2: Establish Python Environment
   let pythonExe;
@@ -826,6 +967,7 @@ async function main() {
     pythonExe = await setupWindowsPython(odysseusDir);
   } else {
     pythonExe = await setupUnixPython(odysseusDir);
+    await setupTmux(odysseusDir);
   }
 
   // Step 3: Install/Verify Python dependencies
@@ -853,8 +995,10 @@ async function main() {
 
   // Step 4: Run Odysseus setup.py to build directories and databases
   console.log('[Odysseus] Initializing database and default admin user credentials...');
+  const odysseusBinDir = path.join(odysseusDir, 'bin');
   const setupEnv = {
     ...process.env,
+    PATH: odysseusBinDir + path.delimiter + (process.env.PATH || ''),
     ODYSSEUS_ADMIN_USER: 'admin',
     ODYSSEUS_ADMIN_PASSWORD: 'techjarves',
     ODYSSEUS_SKIP_RUN_HINT: '1'
@@ -892,13 +1036,13 @@ async function main() {
   const odysseusEnv = {
     ...process.env,
     ...(backend.env || {}),
-    PATH: llamaExeDir + path.delimiter + ((backend.env && backend.env.PATH) || process.env.PATH || '')
+    PATH: llamaExeDir + path.delimiter + odysseusBinDir + path.delimiter + ((backend.env && backend.env.PATH) || process.env.PATH || '')
   };
   
   const odysseusProcess = spawn(pythonExe, [
     '-m', 'uvicorn', 'app:app',
     '--host', '127.0.0.1',
-    '--port', '7000'
+    '--port', '7070'
   ], {
     cwd: odysseusDir,
     env: odysseusEnv,
@@ -907,16 +1051,16 @@ async function main() {
 
   odysseusProcess.stdout.pipe(combinedLogStream, { end: false });
   odysseusProcess.stderr.pipe(combinedLogStream, { end: false });
-  runtimeTracker.register('odysseus-web', odysseusProcess, [7000]);
+  runtimeTracker.register('odysseus-web', odysseusProcess, [7070]);
 
   // Step 12: Wait for Odysseus server to bind
   console.log('[Odysseus] Waiting for web application to start up...');
-  await waitPort(7000, 180000);
+  await waitPort(7070, 180000);
   console.log('[Odysseus] Odysseus is ready and active.');
 
   // Step 13: Open browser window
-  console.log('[Odysseus] Launching http://127.0.0.1:7000 in your web browser...');
-  openBrowser('http://127.0.0.1:7000');
+  console.log('[Odysseus] Launching http://127.0.0.1:7070 in your web browser...');
+  openBrowser('http://127.0.0.1:7070');
 
   console.log('\n=================================================================');
   console.log(' Odysseus Portable is running successfully!                      ');

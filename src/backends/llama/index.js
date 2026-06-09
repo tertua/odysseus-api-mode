@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import http from 'http';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 
 import { detectHardware } from '../../system.js';
 import { downloadFile, extractArchive, getLlamaCppAssets, printProgressBar } from '../../downloader.js';
@@ -164,6 +164,16 @@ export async function startLlamaBackend(context) {
       extractArchive(secondaryZip, llamaDir);
       fs.unlinkSync(secondaryZip);
     }
+    
+    if (process.platform === 'darwin') {
+      try {
+        console.log('[Inference] Removing macOS Gatekeeper quarantine attributes from downloaded binaries...');
+        execSync(`xattr -r -d com.apple.quarantine "${llamaDir}"`);
+      } catch (err) {
+        console.log(`[Inference] Note: Could not remove quarantine attributes: ${err.message}`);
+      }
+    }
+
     console.log('[Inference] Setup complete.');
     llamaExePath = findExecutable(llamaDir, exeName);
     if (!llamaExePath) {
@@ -188,13 +198,20 @@ export async function startLlamaBackend(context) {
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         found.push(...scanLocalGgufs(fullPath, baseDir));
-      } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.gguf')) {
-        found.push({
-          file: entry.name,
-          relPath: path.relative(baseDir, fullPath),
-          path: fullPath,
-          size: fs.statSync(fullPath).size
-        });
+      } else if ((entry.isFile() || entry.isSymbolicLink()) && entry.name.toLowerCase().endsWith('.gguf')) {
+        try {
+          const stat = fs.statSync(fullPath);
+          if (stat.isFile()) {
+            found.push({
+              file: entry.name,
+              relPath: path.relative(baseDir, fullPath),
+              path: fullPath,
+              size: stat.size
+            });
+          }
+        } catch (err) {
+          // Ignore broken symlinks
+        }
       }
     }
     return found;
@@ -205,10 +222,12 @@ export async function startLlamaBackend(context) {
   localGgufs.forEach(m => {
     const pathParts = m.relPath.replace(/\\/g, '/').split('/');
     if (pathParts.length > 1) {
-      // For downloaded Cookbook models, the folder name is the stable model id
-      // llama-server router exposes. Avoid seeding filename and relpath aliases
-      // because the chat picker shows each cached_model entry as a separate row.
-      modelNames.add(pathParts[0]);
+      // For HF hub caches, the structure is usually hub/models--repo--name/...
+      let folderName = pathParts[0];
+      if (folderName === 'hub' && pathParts.length > 2) {
+        folderName = pathParts[1].replace(/^models--/, '').replace(/--/g, '/');
+      }
+      modelNames.add(folderName);
     } else {
       modelNames.add(m.file.replace(/\.gguf$/i, ''));
     }
@@ -239,6 +258,7 @@ export async function startLlamaBackend(context) {
   if (process.platform !== 'win32') {
     env.LD_LIBRARY_PATH = llamaExeDir + (process.env.LD_LIBRARY_PATH ? path.delimiter + process.env.LD_LIBRARY_PATH : '');
     env.DYLD_LIBRARY_PATH = llamaExeDir + (process.env.DYLD_LIBRARY_PATH ? path.delimiter + process.env.DYLD_LIBRARY_PATH : '');
+    env.DYLD_FALLBACK_LIBRARY_PATH = llamaExeDir + (process.env.DYLD_FALLBACK_LIBRARY_PATH ? path.delimiter + process.env.DYLD_FALLBACK_LIBRARY_PATH : '');
   }
 
   const logStream = context.combinedLogStream || fs.createWriteStream(path.join(logsDir, 'llama.log'), { flags: 'w' });

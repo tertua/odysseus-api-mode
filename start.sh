@@ -46,6 +46,9 @@ if [ ! -x "$NODE_BIN" ]; then
   mkdir -p "$tmp" "$NODE_DIR"
   download_file "$url" "$archive"
   tar -xJf "$archive" --strip-components=1 -C "$NODE_DIR"
+  if [ "$os" = "darwin" ]; then
+    xattr -r -d com.apple.quarantine "$NODE_DIR" 2>/dev/null || true
+  fi
   chmod +x "$NODE_BIN"
   rm -rf "$tmp"
 fi
