@@ -1,149 +1,150 @@
-# Odysseus Portable: Zero-Dependency AI Workspace
+# 🌌 Odysseus Portable AI Workspace
 
-A 100% self-contained, offline-first local AI workspace. It seamlessly bundles a hardware-optimized local **llama.cpp** inference engine with **Odysseus**—a premium, open-source local web interface featuring SQLite memory, calendars, custom agents, and deep research tools, created and maintained by **[pewdiepie-archdaemon](https://github.com/pewdiepie-archdaemon)** (also known as **PewDewPie**). 
+A unified, 100% self-contained, open-source, and offline-first local AI agent workspace. This project bundles **Odysseus** (a premium, local Claude/ChatGPT-like web interface featuring SQLite memory, calendars, custom agents, and deep research) alongside a dynamic, hardware-optimized local **llama.cpp** inference engine.
 
 Everything runs portably from any directory or USB drive without requiring pre-installed system dependencies.
 
 ---
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=for-the-badge&logo=platformio" alt="Platform" />
-  <img src="https://img.shields.io/badge/Node.js-v22.16%20Portable-green?style=for-the-badge&logo=node.js" alt="Node" />
-  <img src="https://img.shields.io/badge/Python-v3.12%20Portable-yellow?style=for-the-badge&logo=python" alt="Python" />
-  <img src="https://img.shields.io/badge/Inference-llama.cpp%20GGUF-orange?style=for-the-badge&logo=c%2B%2B" alt="Inference" />
-  <img src="https://img.shields.io/badge/License-MIT-red?style=for-the-badge" alt="License" />
+  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square&logo=platformio" alt="Platform" />
+  <img src="https://img.shields.io/badge/Node.js-v22.16%20Portable-green?style=flat-square&logo=node.js" alt="Node" />
+  <img src="https://img.shields.io/badge/Python-v3.12%20Portable-yellow?style=flat-square&logo=python" alt="Python" />
+  <img src="https://img.shields.io/badge/Inference-llama.cpp%20GGUF-orange?style=flat-square&logo=c%2B%2B" alt="Inference" />
+  <img src="https://img.shields.io/badge/License-MIT-red?style=flat-square" alt="License" />
 </p>
 
 ---
 
 ## 📖 Table of Contents
-
-- [ Odysseus Portable: Zero-Dependency AI Workspace](#-odysseus-portable-zero-dependency-ai-workspace)
-  - [ Table of Contents](#-table-of-contents)
-  - [ Overview](#-overview)
-  - [ Quick Start](#-quick-start)
-    - [Windows](#windows)
-    - [Linux & macOS](#linux--macos)
-  - [ Default Credentials](#-default-credentials)
-  - [ Core Technologies & Isolated Runtimes](#️-core-technologies--isolated-runtimes)
-  - [ Key Technical Features](#-key-technical-features)
-  - [ Directory Architecture](#-directory-architecture)
-  - [ Configuration & Environment Variables](#️-configuration--environment-variables)
-  - [ System Cleanup & Reset](#-system-cleanup--reset)
-  - [ Troubleshooting & FAQ](#-troubleshooting--faq)
-  - [ Open Source & License](#-open-source--license)
+1. [✨ Introduction](#-introduction)
+2. [⚙️ How It Works (Setup Flow)](#️-how-it-works-setup-flow)
+3. [💻 Supported Platforms](#-supported-platforms)
+4. [💾 Storage Footprint Guidance](#-storage-footprint-guidance)
+5. [🚀 Quick Start](#-quick-start)
+6. [📂 Directory Structure](#-directory-structure)
+7. [🛠️ Configuration & Environment](#️-configuration--environment)
+8. [🔄 Update Instructions](#-update-instructions)
+9. [🛡️ Security Advisory](#️-security-advisory)
+10. [💡 Troubleshooting & FAQ](#-troubleshooting--faq)
+11. [📄 Open Source & License](#-open-source--license)
 
 ---
 
-## ✨ Overview
+## ✨ Introduction
 
-Odysseus Portable is designed to give you a private, offline, ChatGPT/Claude-grade agentic workspace that runs anywhere. By separating runtimes from your global system environment:
-- **USB Portable**: Run it directly off any exFAT/FAT32 USB flash drive or external SSD.
-- **Zero Config**: No need to install Node.js, Python, compiler toolchains, or global GPU drivers.
-- **Offline & Private**: 100% of your data, embeddings, chat history, and GGUF models stay locally on your machine.
+Odysseus Portable provides an offline-first AI agent interface that does not require global system installations or administrator privileges. 
+
+> [!IMPORTANT]
+> **Data Portability Guarantee**: All user data, databases, config parameters, cached models, and secrets remain inside the project folder directory. Unplugging the USB drive leaves no configuration traces, files, or environment variables on the host system.
+
+---
+
+## ⚙️ How It Works (Setup Flow)
+
+When you run the script, the orchestrator handles hardware scanning, runtime extraction, dependency checks, database seeding, and application setup:
+
+```mermaid
+graph TD
+    A("Run start.bat / start.sh") --> B{"Node.js present in bin/?"}
+    B -->|No| C["Download and Extract Portable Node.js"]
+    B -->|Yes| D["Run src/start.js Orchestrator"]
+    C --> D
+    D --> E["Scan Hardware: OS, CPU, RAM, and GPU"]
+    E --> F["Download best precompiled llama-server binary based on GPU"]
+    F --> G["Sync Upstream Odysseus Repo via Git"]
+    G --> H["Apply Self-Healing Code Patches to Odysseus code"]
+    H --> I{"Python Environment Setup"}
+    I -->|Windows| J["Extract Embedded Python 3.12 + Pip + Mock Venv"]
+    I -->|Linux / macOS| K["Download Astral UV + Create cached virtual environment"]
+    J --> L["Install Python requirements.txt dependencies"]
+    K --> L
+    L --> M["Run setup.py and Auto-Seed SQLite Database credentials"]
+    M --> N["Start LLM Inference Backend llama-server on 10086"]
+    N --> O["Start Headless API Proxy on 8080 with auto-context scale and model mapping"]
+    O --> P["Spawn Odysseus Web UI Server on port 7070"]
+    P --> Q["Wait for ports and Open browser to http://127.0.0.1:7070"]
+```
+
+---
+
+## 💻 Supported Platforms
+
+The launcher supports **Windows**, **macOS** (Intel & Apple Silicon), and **Linux** (x64 & ARM64). 
+
+> [!NOTE]
+> Each operating system platform creates its own isolated directory structure under the `/bin` and cache folders (e.g. `bin/node-linux-x64` or `bin/node/` on Windows) to prevent configuration collisons when running the same USB drive on different machines.
+
+---
+
+## 💾 Storage Footprint Guidance
+
+Because GGUF model files can be large, ensure your external drive matches the capacity required:
+
+| Parameter | Minimum | Recommended |
+|-----------|---------|-------------|
+| **USB/Drive Size** | **8 GB** | **64 GB or 128 GB** (High-speed SSD/USB 3.0+) |
+| **Launcher Code & Runtimes** | ~1.5 GB | ~2.5 GB (after package compilations) |
+| **Model Capacities** | 0.5B - 3B GGUF (~1GB - 2.5GB) | 7B - 8B GGUF (~4.5GB - 5GB) |
 
 ---
 
 ## 🚀 Quick Start
 
 ### Windows
-1. Double-click `start.bat` or run:
+1. Double-click `start.bat` or run the following command in Command Prompt:
    ```cmd
    start.bat
    ```
-2. The launcher will automatically bootstrap Node.js, sync the Odysseus code, extract the embedded Python engine, and verify dependencies.
-3. Choose a GGUF model to download (e.g. Qwen 2.5 Coder) or drag-and-drop your own `.gguf` files directly into the `./models` directory.
-4. The workspace will boot and launch automatically in your web browser.
+2. The orchestrator downloads dependencies and displays the local model selection prompt.
+3. Select your model and sign in to the web app interface at `http://127.0.0.1:7070`.
 
-### Linux & macOS
-1. Open your terminal in the directory and grant executable permissions:
+### macOS
+1. Open a terminal in the project directory, grant execution rights, and run:
    ```bash
    chmod +x start.sh
-   ```
-2. Run the startup script:
-   ```bash
    ./start.sh
    ```
 
-> [!NOTE]
-> On macOS, the script will automatically clear Apple Gatekeeper quarantine attributes (`com.apple.quarantine`) from downloaded binaries and Tmux packages to ensure a smooth launch.
+### Linux
+1. Open a terminal and execute:
+   ```bash
+   chmod +x start.sh
+   ./start.sh
+   ```
 
 ---
 
-## 🔑 Default Credentials
-
-The orchestrator pre-seeds the local SQLite database. Use these credentials to sign in on the web portal:
-- **Username**: `admin`
-- **Password**: `techjarves`
-
----
-
-## 🛠️ Core Technologies & Isolated Runtimes
-
-| Component | Technology | Portability Mode |
-|-----------|------------|------------------|
-| **Frontend UI** | [Odysseus](https://github.com/pewdiepie-archdaemon/odysseus) | Auto-updating Git pull |
-| **Inference Engine** | [llama.cpp](https://github.com/ggml-org/llama.cpp) | Dynamic hardware-matched binary download |
-| **JS Orchestrator** | Node.js v22.16.0 | Isolated ZIP/TAR bootstrap extraction |
-| **Python Environment** | Python 3.12 (Embedded / UV Venv) | Isolated embed runtimes (Win) / Astral UV (Unix) |
-| **Multiplexer (Unix)** | Tmux v3.6b | Isolated download for background service tracking |
-
----
-
-## 🌟 Key Technical Features
-
-###  1. Isolated Portable Runtimes
-The launcher operates inside strict sandbox directory boundaries. It downloads and extracts architecture-specific binaries (`Node.js`, `Python`, `Astral UV`) without adding directories to your global `PATH` or writing files to system folders.
-
-###  2. Automated Hardware & GPU Acceleration
-On startup, the system scans CPU instructions, active graphics hardware, and VRAM limits:
-- **Apple Silicon**: Automatically utilizes **Metal** GPU execution.
-- **NVIDIA Hardware**: Automatically routes queries through `nvidia-smi` and boots **CUDA** (offloading all 99 layers).
-- **Vulkan Compatible (AMD/Intel)**: Detects Vulkan drivers to map acceleration correctly.
-- **CPU Fallback**: Gracefully defaults to optimized multi-threaded CPU execution if no GPU is available.
-
-###  3. Dynamic Inference Backend Orchestration
-- **Self-Healing Context Ladder**: If a model load fails due to VRAM/RAM memory limits, the Node.js orchestrator catches the failure and automatically scales down the context size (from 32K -> 24K -> 16K -> 12K -> 8K -> 4K -> 2K) and restarts the server to prevent crashes.
-- **API proxy & Model Mapper**: A background proxy server runs on port `8080` to intercept requests, handle context retries, and rewrite model names to match the absolute disk paths of GGUF files.
-
-###  4. Self-Healing Code Hotpatches
-The launcher scans and modifies the cloned upstream Odysseus repository on the fly to support portability:
-- **Path Normalizer**: Patches python router logic to support spaces and Windows drive formatting.
-- **Cache Isolation**: Locks scanner operations to the local `/models` folder rather than reading directories from global Hugging Face directories.
-- **Local Server Resolvers**: Patches JS downloads to ensure target directories match portable volumes.
-
----
-
-## 📂 Directory Architecture
+## 📂 Directory Structure
 
 ```text
 Odysseus-Portable/
-├── start.bat                 # Windows entrypoint script
-├── start.sh                  # macOS and Linux entrypoint script
+├── start.bat                 # Windows startup script
+├── start.sh                  # macOS and Linux startup script
 ├── LICENSE                   # Open-source MIT License
-├── package.json              # Node.js project metadata
-├── README.md                 # Project documentation
+├── package.json              # Launcher Node.js configuration
+├── README.md                 # Documentation
 ├── src/                      # Orchestrator Source Code
-│   ├── start.js              # Primary process bootstrapper
-│   ├── system.js             # CPU/GPU hardware detector
-│   ├── downloader.js         # Package fetcher & extractor
-│   ├── model.js              # Model downloader & GGUF scanner
-│   ├── runtime.js            # Subprocess tracker
-│   └── backends/             # Inference engine routers
-│       ├── common.js         # SQLite database seeder
-│       └── llama/            # llama-server adapter & HTTP proxy
-├── bin/                      # Extracted portable runtimes
-├── models/                   # Shared local GGUF models folder
-├── odysseus/                 # Cloned Odysseus git repository
-├── logs/                     # Combined combined stdout/stderr log output
-└── scripts/                  # Utilities (Reset & Node bootstrappers)
+│   ├── start.js              # Launcher process runner
+│   ├── system.js             # Hardware and OS scanner
+│   ├── downloader.js         # Package downloader
+│   ├── model.js              # GGUF downloader and scanner
+│   ├── runtime.js            # Subprocess manager
+│   └── backends/             # Inference runners
+│       ├── common.js         # SQLite seeder
+│       └── llama/            # llama-server proxy
+├── bin/                      # Downloaded runtimes (Node, python, llama-server)
+├── models/                   # Local GGUF models folder
+├── odysseus/                 # Cloned Odysseus repository
+├── logs/                     # Session stderr and stdout logs
+└── scripts/                  # Cleanup and bootstrappers
 ```
 
 ---
 
-## ⚙️ Configuration & Environment Variables
+## 🛠️ Configuration & Environment
 
-You can customize execution by adjusting environment variables or editing the generated config at `data/launcher_config.json`:
+Settings can be customized by editing the config at `data/launcher_config.json` or by overriding variables during execution:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -152,32 +153,59 @@ You can customize execution by adjusting environment variables or editing the ge
 | `ODYSSEUS_ADMIN_USER` | Custom admin username seeded during setup | `admin` |
 | `ODYSSEUS_ADMIN_PASSWORD` | Custom admin password seeded during setup | `techjarves` |
 
+### Hugging Face Credentials Setup
+If you need to query or download private/gated models from Hugging Face, create a `.env` file inside the root of the `./odysseus` directory:
+
+```env
+# Save as: odysseus/.env
+# Replace the placeholder value below with your actual read token from HuggingFace
+HUGGING_FACE_HUB_TOKEN=hf_yourPlaceholderReadTokenHere
+```
+
 ---
 
-##  System Cleanup & Reset
+## 🔄 Update Instructions
 
-If you run into configuration issues or want to perform a factory reset, you can use the built-in reset utilities:
-- **Windows**: Run `scripts\reset.bat`
-- **macOS / Linux**: Run `chmod +x scripts/reset.sh && ./scripts/reset.sh`
+- **Launcher updates**: Run `git pull` inside the `Odysseus-Portable` folder.
+- **Odysseus Web App updates**: The orchestrator checks the `./odysseus` git repository status on every launch and automatically pulls updates (`git pull --ff-only`) if it is connected to the internet.
 
-> [!WARNING]
-> This will wipe all downloaded runtimes, packages, databases, and logs. However, **your GGUF models in the `models/` directory will remain safe and will never be deleted.**
+---
+
+## 🛡️ Security Advisory
+
+- **Port Isolation**: By default, `llama-server` and the `Odysseus` web app bind to `127.0.0.1` (localhost). Do not bind these servers to `0.0.0.0` on untrusted networks, as it exposes your local inference API and SQLite database to anyone on your network.
+- **Admin Password**: Change the default admin password (`techjarves`) in the user profile settings after signing in.
 
 ---
 
 ## 💡 Troubleshooting & FAQ
 
-#### 1. Port Conflicts (7070 / 8080 / 10086)
-If you get a startup error stating that a port is already in use, check if you have another web server bound to `7070`, `8080`, or `10086`. Close them and restart the launcher.
+<details>
+<summary><b>1. Port is already in use error</b></summary>
 
-#### 2. exFAT/FAT32 USB Drive symbolic link errors
-ExFAT and FAT32 file systems do not natively support symbolic links. The launcher automatically detects this limitation and falls back to **hardlinks** or copy operations to organize nested directories.
+Check if you are running other web servers or instances on ports `7070` (Odysseus Web), `8080` (API Proxy), or `10086` (llama-server). Terminate them and run the startup script again.
+</details>
 
-#### 3. How do I add my own GGUF models?
-Simply copy any `.gguf` file into the root `models/` folder. The launcher will automatically scan the folder on launch and display it at the top of the model selection menu.
+<details>
+<summary><b>2. GGUF model fails to load or Out of Memory (OOM)</b></summary>
+
+If a selected GGUF model is too large for your system's VRAM/RAM, the proxy server will automatically step down the context size limit and reboot the backend. If it still crashes, download a smaller model quantization (e.g. Q4_K_M or Q2_K) or a model with fewer parameters (e.g. 1.5B or 3B).
+</details>
+
+<details>
+<summary><b>3. exFAT/FAT32 USB drive symbolic link errors</b></summary>
+
+exFAT and FAT32 file systems do not support symbolic links. The launcher automatically detects this and falls back to **hardlinks** or copy operations to organize nested folders.
+</details>
 
 ---
 
 ## 📄 Open Source & License
 
-This project is 100% open-source and released under the **MIT License**. You are free to use, modify, distribute, and build upon both the launcher and the Odysseus workspace frontend. Contributions, feedback, and pull requests are welcome!
+This project is 100% open-source and released under the **MIT License**. 
+
+### Credits & Attribution
+- **Odysseus UI**: Created and maintained by **[pewdiepie-archdaemon](https://github.com/pewdiepie-archdaemon)** (also known as **PewDewPie**).
+- **llama.cpp**: Created and maintained by **[ggml-org](https://github.com/ggml-org)**.
+- **UV**: Developed by **[Astral](https://github.com/astral-sh)**.
+- **Orchestration Wrapper**: Maintained by the open-source community.
