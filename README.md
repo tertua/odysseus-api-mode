@@ -16,20 +16,6 @@ Everything runs portably from any directory or USB drive without requiring pre-i
 
 ---
 
-## 📖 Table of Contents
-1. [✨ Introduction](#-introduction)
-2. [⚙️ How It Works (Setup Flow)](#️-how-it-works-setup-flow)
-3. [💻 Supported Platforms](#-supported-platforms)
-4. [💾 Storage Footprint Guidance](#-storage-footprint-guidance)
-5. [🚀 Quick Start](#-quick-start)
-6. [📂 Directory Structure](#-directory-structure)
-7. [🛠️ Configuration & Environment](#️-configuration--environment)
-8. [🔄 Update Instructions](#-update-instructions)
-9. [🛡️ Security Advisory](#️-security-advisory)
-10. [💡 Troubleshooting & FAQ](#-troubleshooting--faq)
-11. [📄 Open Source & License](#-open-source--license)
-
----
 
 ## ✨ Introduction
 
