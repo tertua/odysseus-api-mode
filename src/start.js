@@ -1071,7 +1071,7 @@ async function main() {
       console.log('[Python] Package dependencies OK.');
     } catch (e) {
       console.log('[Python] Installing dependencies (this may take a few minutes)...');
-      execFileSync(pythonExe, ['-m', 'pip', 'install', '-r', 'requirements.txt', 'bcrypt', '--no-warn-script-location', '-q'], {
+      execFileSync(pythonExe, ['-m', 'pip', 'install', '-r', 'requirements.txt', 'bcrypt', '--no-warn-script-location'], {
         cwd: odysseusDir,
         stdio: 'inherit'
       });
@@ -1079,7 +1079,7 @@ async function main() {
     }
   } else {
     const uvPath = path.join(odysseusDir, 'bin', 'uv');
-    execFileSync(uvPath, ['pip', 'install', '--python', pythonExe, '-r', 'requirements.txt', 'bcrypt', '--quiet'], {
+    execFileSync(uvPath, ['pip', 'install', '--python', pythonExe, '-r', 'requirements.txt', 'bcrypt'], {
       cwd: odysseusDir,
       stdio: 'inherit'
     });
