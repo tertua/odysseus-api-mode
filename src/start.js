@@ -592,6 +592,30 @@ async function setupWindowsPython(odysseusDir) {
   const pythonDir = path.join(oBinDir, 'python');
   const pythonExe = path.join(pythonDir, 'python.exe');
 
+  const enableSitePackages = () => {
+    // Enable site-packages so installed packages are found
+    const pthFile = path.join(pythonDir, 'python312._pth');
+    if (fs.existsSync(pthFile)) {
+      let content = fs.readFileSync(pthFile, 'utf8');
+      if (content.includes('#import site')) {
+        content = content.replace('#import site', 'import site');
+        fs.writeFileSync(pthFile, content, 'utf8');
+      }
+    }
+  };
+
+  const installPip = async () => {
+    console.log('[Python] Fetching get-pip.py...');
+    const pipScriptPath = path.join(oBinDir, 'get-pip.py');
+    await downloadFile(pipUrl, pipScriptPath, (downloaded, total) => {
+      printProgressBar(downloaded, total, 'Downloading pip bootstrap: ');
+    });
+
+    console.log('[Python] Installing pip...');
+    execFileSync(pythonExe, [pipScriptPath, '--no-warn-script-location', '-q'], { stdio: 'inherit' });
+    fs.unlinkSync(pipScriptPath);
+  };
+
   if (fs.existsSync(pythonExe)) {
     console.log('[Python] Portable Python environment detected.');
     // Ensure python3.exe exists for Git Bash subshell compatibility
@@ -601,6 +625,23 @@ async function setupWindowsPython(odysseusDir) {
         fs.copyFileSync(pythonExe, python3Exe);
       } catch (e) {}
     }
+
+    // Ensure site-packages are enabled (could have been skipped if pre-existing python without setup)
+    enableSitePackages();
+
+    // Check if pip is functional
+    let pipOk = false;
+    try {
+      execFileSync(pythonExe, ['-m', 'pip', '--version'], { stdio: 'ignore' });
+      pipOk = true;
+    } catch (e) {
+      console.log('[Python] pip is missing or broken. Re-bootstrapping pip...');
+    }
+
+    if (!pipOk) {
+      await installPip();
+    }
+
     return pythonExe;
   }
 
@@ -617,24 +658,8 @@ async function setupWindowsPython(odysseusDir) {
   extractArchive(pyZipPath, pythonDir);
   fs.unlinkSync(pyZipPath);
 
-  // Enable site-packages so installed packages are found
-  const pthFile = path.join(pythonDir, 'python312._pth');
-  if (fs.existsSync(pthFile)) {
-    let content = fs.readFileSync(pthFile, 'utf8');
-    content = content.replace('#import site', 'import site');
-    fs.writeFileSync(pthFile, content, 'utf8');
-  }
-
-  // Bootstrap pip
-  console.log('[Python] Fetching get-pip.py...');
-  const pipScriptPath = path.join(oBinDir, 'get-pip.py');
-  await downloadFile(pipUrl, pipScriptPath, (downloaded, total) => {
-    printProgressBar(downloaded, total, 'Downloading pip bootstrap: ');
-  });
-
-  console.log('[Python] Installing pip...');
-  execFileSync(pythonExe, [pipScriptPath, '--no-warn-script-location', '-q'], { stdio: 'inherit' });
-  fs.unlinkSync(pipScriptPath);
+  enableSitePackages();
+  await installPip();
 
   // Mock venv module for HuggingFace library compatibility
   const venvDir = path.join(pythonDir, 'Lib', 'site-packages', 'venv');
@@ -953,15 +978,36 @@ async function main() {
   fs.mkdirSync(path.join(projectRoot, 'data'), { recursive: true });
   const runtimeTracker = createRuntimeTracker(projectRoot);
   runtimeTracker.cleanupPrevious();
-  runtimeTracker.cleanupOwnedPortProcesses([8080, 10086, 7070]);
-
-  for (const port of [8080, 10086, 7070]) {
-    if (await isPortOpen(port)) {
-      throw new Error(`Port ${port} is already in use by a process not tracked by this portable launcher. Close that process or change its port, then restart Odysseus Portable.`);
-    }
-  }
 
   const launcherConfig = loadLauncherConfig();
+  const baseWebPort = Number(process.env.ODYSSEUS_PORT || launcherConfig.webPort || 7070);
+  const baseProxyPort = Number(process.env.ODYSSEUS_PROXY_PORT || launcherConfig.proxyPort || 8080);
+  const baseLlamaPort = Number(process.env.ODYSSEUS_LLAMA_PORT || launcherConfig.llamaPort || 10086);
+
+  runtimeTracker.cleanupOwnedPortProcesses([baseProxyPort, baseLlamaPort, baseWebPort]);
+
+  async function findFreePort(startPort) {
+    let port = startPort;
+    while (await isPortOpen(port)) {
+      port++;
+    }
+    return port;
+  }
+
+  const webPort = await findFreePort(baseWebPort);
+  const proxyPort = await findFreePort(baseProxyPort);
+  const llamaPort = await findFreePort(baseLlamaPort);
+
+  if (webPort !== baseWebPort) {
+    console.log(`[Orchestrator] Port ${baseWebPort} is in use. Selected next free port: ${webPort}`);
+  }
+  if (proxyPort !== baseProxyPort) {
+    console.log(`[Orchestrator] Port ${baseProxyPort} is in use. Selected next free port: ${proxyPort}`);
+  }
+  if (llamaPort !== baseLlamaPort) {
+    console.log(`[Orchestrator] Port ${baseLlamaPort} is in use. Selected next free port: ${llamaPort}`);
+  }
+
   let backendChoice = getBackendChoice(launcherConfig);
 
   if (!backendChoice) {
@@ -1025,7 +1071,7 @@ async function main() {
       console.log('[Python] Package dependencies OK.');
     } catch (e) {
       console.log('[Python] Installing dependencies (this may take a few minutes)...');
-      execFileSync(pythonExe, ['-m', 'pip', 'install', '-r', 'requirements.txt', 'bcrypt', '--no-warn-script-location', '-q'], {
+      execFileSync(pythonExe, ['-m', 'pip', 'install', '-r', 'requirements.txt', 'bcrypt', '--no-warn-script-location'], {
         cwd: odysseusDir,
         stdio: 'inherit'
       });
@@ -1033,7 +1079,7 @@ async function main() {
     }
   } else {
     const uvPath = path.join(odysseusDir, 'bin', 'uv');
-    execFileSync(uvPath, ['pip', 'install', '--python', pythonExe, '-r', 'requirements.txt', 'bcrypt', '--quiet'], {
+    execFileSync(uvPath, ['pip', 'install', '--python', pythonExe, '-r', 'requirements.txt', 'bcrypt'], {
       cwd: odysseusDir,
       stdio: 'inherit'
     });
@@ -1069,11 +1115,13 @@ async function main() {
     pythonExe,
     waitPort,
     isPortOpen,
-    launcherConfig: loadLauncherConfig(),
+    launcherConfig,
     saveLauncherConfig,
     combinedLogStream,
     combinedLogPath,
-    runtimeTracker
+    runtimeTracker,
+    proxyPort,
+    llamaPort
   };
   const backend = backendChoice === 'ollama'
     ? await startOllamaBackend(backendContext)
@@ -1092,7 +1140,7 @@ async function main() {
   const odysseusProcess = spawn(pythonExe, [
     '-m', 'uvicorn', 'app:app',
     '--host', '127.0.0.1',
-    '--port', '7070'
+    '--port', String(webPort)
   ], {
     cwd: odysseusDir,
     env: odysseusEnv,
@@ -1101,16 +1149,16 @@ async function main() {
 
   odysseusProcess.stdout.pipe(combinedLogStream, { end: false });
   odysseusProcess.stderr.pipe(combinedLogStream, { end: false });
-  runtimeTracker.register('odysseus-web', odysseusProcess, [7070]);
+  runtimeTracker.register('odysseus-web', odysseusProcess, [webPort]);
 
   // Step 12: Wait for Odysseus server to bind
   console.log('[Odysseus] Waiting for web application to start up...');
-  await waitPort(7070, 180000);
+  await waitPort(webPort, 180000);
   console.log('[Odysseus] Odysseus is ready and active.');
 
   // Step 13: Open browser window
-  console.log('[Odysseus] Launching http://127.0.0.1:7070 in your web browser...');
-  openBrowser('http://127.0.0.1:7070');
+  console.log(`[Odysseus] Launching http://127.0.0.1:${webPort} in your web browser...`);
+  openBrowser(`http://127.0.0.1:${webPort}`);
 
   console.log('\n=================================================================');
   console.log(' Odysseus Portable is running successfully!                      ');
