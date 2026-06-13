@@ -1,4 +1,4 @@
-# 🌌 Odysseus Portable AI Workspace
+#  Odysseus Portable AI Workspace
 
 A unified, 100% self-contained, open-source, and offline-first local AI agent workspace. This project bundles **Odysseus** (a premium, local Claude/ChatGPT-like web interface featuring SQLite memory, calendars, custom agents, and deep research) alongside a dynamic, hardware-optimized local **llama.cpp** inference engine.
 
@@ -16,21 +16,6 @@ Everything runs portably from any directory or USB drive without requiring pre-i
 
 ---
 
-## 📖 Table of Contents
-1. [✨ Introduction](#-introduction)
-2. [⚙️ How It Works (Setup Flow)](#️-how-it-works-setup-flow)
-3. [💻 Supported Platforms](#-supported-platforms)
-4. [💾 Storage Footprint Guidance](#-storage-footprint-guidance)
-5. [🚀 Quick Start](#-quick-start)
-6. [📂 Directory Structure](#-directory-structure)
-7. [🛠️ Configuration & Environment](#️-configuration--environment)
-8. [🔄 Update Instructions](#-update-instructions)
-9. [🛡️ Security Advisory](#️-security-advisory)
-10. [💡 Troubleshooting & FAQ](#-troubleshooting--faq)
-11. [📄 Open Source & License](#-open-source--license)
-
----
-
 ## ✨ Introduction
 
 Odysseus Portable provides an offline-first AI agent interface that does not require global system installations or administrator privileges. 
@@ -38,33 +23,20 @@ Odysseus Portable provides an offline-first AI agent interface that does not req
 > [!IMPORTANT]
 > **Data Portability Guarantee**: All user data, databases, config parameters, cached models, and secrets remain inside the project folder directory. Unplugging the USB drive leaves no configuration traces, files, or environment variables on the host system.
 
+### 🎥 Watch Video Demo
+
+[![Odysseus Portable AI Workspace Video Demo](https://img.youtube.com/vi/iiM8Y5uzpJU/maxresdefault.jpg)](https://youtu.be/iiM8Y5uzpJU)
+
 ---
 
-## ⚙️ How It Works (Setup Flow)
+## ⚙️ How It Works
 
-When you run the script, the orchestrator handles hardware scanning, runtime extraction, dependency checks, database seeding, and application setup:
+Odysseus Portable automates the local AI environment setup in a few simple steps when you execute the startup script:
 
-```mermaid
-graph TD
-    A("Run start.bat / start.sh") --> B{"Node.js present in bin/?"}
-    B -->|No| C["Download and Extract Portable Node.js"]
-    B -->|Yes| D["Run src/start.js Orchestrator"]
-    C --> D
-    D --> E["Scan Hardware: OS, CPU, RAM, and GPU"]
-    E --> F["Download best precompiled llama-server binary based on GPU"]
-    F --> G["Sync Upstream Odysseus Repo via Git"]
-    G --> H["Apply Self-Healing Code Patches to Odysseus code"]
-    H --> I{"Python Environment Setup"}
-    I -->|Windows| J["Extract Embedded Python 3.12 + Pip + Mock Venv"]
-    I -->|Linux / macOS| K["Download Astral UV + Create cached virtual environment"]
-    J --> L["Install Python requirements.txt dependencies"]
-    K --> L
-    L --> M["Run setup.py and Auto-Seed SQLite Database credentials"]
-    M --> N["Start LLM Inference Backend llama-server on 10086"]
-    N --> O["Start Headless API Proxy on 8080 with auto-context scale and model mapping"]
-    O --> P["Spawn Odysseus Web UI Server on port 7070"]
-    P --> Q["Wait for ports and Open browser to http://127.0.0.1:7070"]
-```
+1. **Hardware Scan**: Automatically detects your OS, CPU, RAM, and GPU.
+2. **Runtime & Dependency Check**: Downloads and extracts portable Node.js, Python, and a hardware-optimized `llama-server` binary (if not already cached).
+3. **Database Seeding**: Sets up database credentials and applies self-healing code patches to ensure smooth operation.
+4. **Launch**: Starts the `llama-server` backend and Odysseus Web UI, then automatically opens your browser to `http://127.0.0.1:7070`.
 
 ---
 
