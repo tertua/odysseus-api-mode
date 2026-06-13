@@ -16,6 +16,7 @@ Everything runs portably from any directory or USB drive without requiring pre-i
 
 ---
 
+
 ## ✨ Introduction
 
 Odysseus Portable provides an offline-first AI agent interface that does not require global system installations or administrator privileges. 
