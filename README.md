@@ -1,4 +1,4 @@
-# 🌌 Odysseus Portable AI Workspace
+#  Odysseus Portable AI Workspace
 
 A unified, 100% self-contained, open-source, and offline-first local AI agent workspace. This project bundles **Odysseus** (a premium, local Claude/ChatGPT-like web interface featuring SQLite memory, calendars, custom agents, and deep research) alongside a dynamic, hardware-optimized local **llama.cpp** inference engine.
 
@@ -24,33 +24,20 @@ Odysseus Portable provides an offline-first AI agent interface that does not req
 > [!IMPORTANT]
 > **Data Portability Guarantee**: All user data, databases, config parameters, cached models, and secrets remain inside the project folder directory. Unplugging the USB drive leaves no configuration traces, files, or environment variables on the host system.
 
+### 🎥 Watch the Setup & Demo Video: https://youtu.be/iiM8Y5uzpJU
+
+[![Odysseus Portable AI Workspace Video Demo](https://img.youtube.com/vi/iiM8Y5uzpJU/maxresdefault.jpg)](https://youtu.be/iiM8Y5uzpJU)
+
 ---
 
-## ⚙️ How It Works (Setup Flow)
+## ⚙️ How It Works
 
-When you run the script, the orchestrator handles hardware scanning, runtime extraction, dependency checks, database seeding, and application setup:
+Odysseus Portable automates the local AI environment setup in a few simple steps when you execute the startup script:
 
-```mermaid
-graph TD
-    A("Run start.bat / start.sh") --> B{"Node.js present in bin/?"}
-    B -->|No| C["Download and Extract Portable Node.js"]
-    B -->|Yes| D["Run src/start.js Orchestrator"]
-    C --> D
-    D --> E["Scan Hardware: OS, CPU, RAM, and GPU"]
-    E --> F["Download best precompiled llama-server binary based on GPU"]
-    F --> G["Sync Upstream Odysseus Repo via Git"]
-    G --> H["Apply Self-Healing Code Patches to Odysseus code"]
-    H --> I{"Python Environment Setup"}
-    I -->|Windows| J["Extract Embedded Python 3.12 + Pip + Mock Venv"]
-    I -->|Linux / macOS| K["Download Astral UV + Create cached virtual environment"]
-    J --> L["Install Python requirements.txt dependencies"]
-    K --> L
-    L --> M["Run setup.py and Auto-Seed SQLite Database credentials"]
-    M --> N["Start LLM Inference Backend llama-server on 10086"]
-    N --> O["Start Headless API Proxy on 8080 with auto-context scale and model mapping"]
-    O --> P["Spawn Odysseus Web UI Server on port 7070"]
-    P --> Q["Wait for ports and Open browser to http://127.0.0.1:7070"]
-```
+1. **Hardware Scan**: Automatically detects your OS, CPU, RAM, and GPU.
+2. **Runtime & Dependency Check**: Downloads and extracts portable Node.js, Python, and a hardware-optimized `llama-server` binary (if not already cached).
+3. **Database Seeding**: Sets up database credentials and applies self-healing code patches to ensure smooth operation.
+4. **Launch**: Starts the `llama-server` backend and Odysseus Web UI, then automatically opens your browser to `http://127.0.0.1:7070`.
 
 ---
 
@@ -150,14 +137,14 @@ HUGGING_FACE_HUB_TOKEN=hf_yourPlaceholderReadTokenHere
 
 ---
 
-## 🔄 Update Instructions
+##  Update Instructions
 
 - **Launcher updates**: Run `git pull` inside the `Odysseus-Portable` folder.
 - **Odysseus Web App updates**: The orchestrator checks the `./odysseus` git repository status on every launch and automatically pulls updates (`git pull --ff-only`) if it is connected to the internet.
 
 ---
 
-## 🛡️ Security Advisory
+##  Security Advisory
 
 - **Port Isolation**: By default, `llama-server` and the `Odysseus` web app bind to `127.0.0.1` (localhost). Do not bind these servers to `0.0.0.0` on untrusted networks, as it exposes your local inference API and SQLite database to anyone on your network.
 - **Admin Password**: Change the default admin password (`techjarves`) in the user profile settings after signing in.
