@@ -1027,7 +1027,7 @@ async function main() {
     ...process.env,
     PATH: odysseusBinDir + path.delimiter + (process.env.PATH || ''),
     ODYSSEUS_ADMIN_USER: 'admin',
-    ODYSSEUS_ADMIN_PASSWORD: 'techjarves',
+    ODYSSEUS_ADMIN_PASSWORD: 'simatadotid',
     ODYSSEUS_SKIP_RUN_HINT: '1'
   };
   execFileSync(pythonExe, ['setup.py'], {
