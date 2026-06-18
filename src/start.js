@@ -1109,13 +1109,7 @@ async function main() {
           runtimeTracker.terminate(odysseusProcess.pid);
         } catch (e) {}
       }
-      if (typeof backend !== 'undefined' && backend && backend.servers) {
-        for (const item of backend.servers) {
-          try {
-            item.server.close();
-          } catch (e) {}
-        }
-      }
+      // Backend cleanup removed — API-only mode
       if (typeof restoreStdoutStderr === 'function') {
         restoreStdoutStderr();
       }
@@ -1126,23 +1120,7 @@ async function main() {
     }
   });
 
-  if (backend && backend.processes) {
-    for (const item of backend.processes) {
-      item.process.on('exit', (code) => {
-        if (!isExiting) {
-          console.error(`[Error] ${item.name} terminated unexpectedly with code ${code}.`);
-          if (typeof restoreStdoutStderr === 'function') {
-            restoreStdoutStderr();
-          }
-          try {
-            combinedLogStream.end();
-          } catch (e) {}
-          printLogTail(combinedLogPath, 40);
-          shutdown(1);
-        }
-      });
-    }
-  }
+  // Backend process exit handlers removed — API-only mode
 
   odysseusProcess.on('exit', (code) => {
     if (!isExiting) {
