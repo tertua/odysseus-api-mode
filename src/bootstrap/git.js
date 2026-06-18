@@ -168,7 +168,7 @@ export async function ensureOdysseusSource({ projectRoot, odysseusDir, binDir, p
   if (!fs.existsSync(odysseusDir)) {
     if (git.gitExe) {
       console.log(`[Git] Odysseus repository not found. Cloning with ${git.portable ? 'portable' : 'available'} Git...`);
-      runGit(git, ['clone', ODYSSEUS_REPO, 'odysseus'], projectRoot);
+      runGit(git, ['clone', '--branch', 'main', ODYSSEUS_REPO, 'odysseus'], projectRoot);
       console.log('[Git] Clone completed successfully.');
     } else {
       await downloadOdysseusArchive(projectRoot, odysseusDir);
