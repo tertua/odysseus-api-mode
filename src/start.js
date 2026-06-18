@@ -7,8 +7,6 @@ import { execFileSync, spawn, execSync } from 'child_process';
 import net from 'net';
 
 import { downloadFile, extractArchive, printProgressBar } from './downloader.js';
-import { startLlamaBackend } from './backends/llama/index.js';
-import { startOllamaBackend } from './backends/ollama/index.js';
 import { ensureOdysseusSource } from './bootstrap/git.js';
 import { createRuntimeTracker } from './runtime.js';
 
@@ -56,18 +54,7 @@ function saveLauncherConfig(config) {
   }
 }
 
-function promptQuestion(query) {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
-  return new Promise((resolve) => {
-    rl.question(query, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
-}
+// promptQuestion removed — API-only mode does not require interactive prompts
 
 const pyZipUrl = 'https://www.python.org/ftp/python/3.12.9/python-3.12.9-embed-amd64.zip';
 const pipUrl = 'https://bootstrap.pypa.io/get-pip.py';
@@ -81,38 +68,14 @@ function printHeader() {
   console.log("=================================================================\n");
 }
 
-function getBackendChoice(config) {
-  const arg = process.argv.find(a => a.startsWith('--backend='));
-  if (arg) {
-    const val = arg.split('=')[1].toLowerCase();
-    if (val === 'llama' || val === 'llamacpp' || val === 'llama.cpp') return 'llama';
-    return 'ollama';
-  }
-  if (process.env.ODYSSEUS_BACKEND) {
-    const raw = process.env.ODYSSEUS_BACKEND.toLowerCase();
-    if (raw === 'llama' || raw === 'llamacpp' || raw === 'llama.cpp') return 'llama';
-    return 'ollama';
-  }
-  const saved = config?.backend;
-  if (saved === 'llama' || saved === 'ollama') return saved;
-  return 'llama';
-}
+// Backend selection removed — API-only mode
 
-const generatedPatchFiles = [
-  path.join('routes', 'cookbook_helpers.py'),
-  path.join('routes', 'cookbook_routes.py'),
-  path.join('static', 'js', 'cookbookRunning.js'),
-  path.join('static', 'js', 'cookbook.js'),
-  path.join('static', 'js', 'cookbook-hwfit.js')
-];
-
-function cookbookPlatform() {
-  if (process.platform === 'win32') return 'windows';
-  if (process.platform === 'darwin') return 'macos';
-  return 'linux';
-}
+// Cookbook patches removed — API-only mode does not include local model UI
 
 // Self-healing patch for cookbook_helpers.py to support Windows Scripts directory
+// Patch functions removed — API-only mode does not require Cookbook modifications
+
+/*
 function patchCookbookHelpers(odysseusDir) {
   const helpersPath = path.join(odysseusDir, 'routes', 'cookbook_helpers.py');
   if (fs.existsSync(helpersPath)) {
@@ -500,11 +463,13 @@ function patchCookbookRoutesBackendFallback(odysseusDir) {
 }
 
 // Automatically configure Cookbook state to default to the portable models directory
+*/
+
 function configureCookbookState(odysseusDir, projectRoot) {
   const statePath = path.join(odysseusDir, 'data', 'cookbook_state.json');
   const modelsDirAbs = path.resolve(projectRoot, 'models');
   const modelsDirPosix = modelsDirAbs.replace(/\\/g, '/');
-  const platformName = cookbookPlatform();
+  // const platformName = cookbookPlatform();  // Not used in API-only mode
   
   // Ensure the data directory exists
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
@@ -1008,29 +973,7 @@ async function main() {
     console.log(`[Orchestrator] Port ${baseLlamaPort} is in use. Selected next free port: ${llamaPort}`);
   }
 
-  let backendChoice = getBackendChoice(launcherConfig);
-
-  if (!backendChoice) {
-    console.log('Choose inference backend:');
-    console.log('  [1] Ollama   - webapp-managed downloads and model switching');
-    console.log('  [2] llama.cpp - portable GGUF llama-server fallback');
-    
-    const defaultBackend = launcherConfig.backend || 'ollama';
-    const defaultLabel = defaultBackend === 'llama' ? 'llama.cpp' : 'Ollama';
-    const defaultNum = defaultBackend === 'llama' ? '2' : '1';
-
-    const answer = await promptQuestion(`Enter selection [1-2] (default ${defaultNum} - ${defaultLabel}): `);
-    if (answer === '') {
-      backendChoice = defaultBackend;
-    } else if (answer === '2') {
-      backendChoice = 'llama';
-    } else {
-      backendChoice = 'ollama';
-    }
-    saveLauncherConfig({ backend: backendChoice });
-  } else {
-    saveLauncherConfig({ backend: backendChoice });
-  }
+  // Backend selection removed — API-only mode
 
   // Step 1: Ensure directories and sync Odysseus repository
   fs.mkdirSync(binDir, { recursive: true });
@@ -1041,18 +984,9 @@ async function main() {
     projectRoot,
     odysseusDir,
     binDir,
-    patchFiles: generatedPatchFiles
+    patchFiles: []  // No generated patch files in API-only mode
   });
-  patchCookbookHelpers(odysseusDir);
-  patchCookbookRoutes(odysseusDir);
-  patchCookbookStateNormalizer(odysseusDir);
-  patchCookbookPortableServeScan(odysseusDir);
-  patchCookbookWindowsLlamaServer(odysseusDir);
-  patchLlamaRouterContext(projectRoot);
-  patchCookbookCachedRoutePortableFallback(odysseusDir);
-  patchCookbookOllamaDropdown(odysseusDir);
-  patchCookbookLocalServerFix(odysseusDir);
-  patchCookbookRoutesBackendFallback(odysseusDir);
+  // Cookbook patches removed — API-only mode
 
   // Step 2: Establish Python Environment
   let pythonExe;
@@ -1102,39 +1036,13 @@ async function main() {
     stdio: 'inherit'
   });
 
-  // Configure Cookbook default directories to point to our portable folder
-  configureCookbookState(odysseusDir, projectRoot);
-
-  console.log(`[Inference] Selected backend: ${backendChoice === 'ollama' ? 'Ollama' : 'llama.cpp'}`);
-  const backendContext = {
-    binDir,
-    logsDir,
-    modelsDir,
-    odysseusDir,
-    projectRoot,
-    pythonExe,
-    waitPort,
-    isPortOpen,
-    launcherConfig,
-    saveLauncherConfig,
-    combinedLogStream,
-    combinedLogPath,
-    runtimeTracker,
-    proxyPort,
-    llamaPort
-  };
-  const backend = backendChoice === 'ollama'
-    ? await startOllamaBackend(backendContext)
-    : await startLlamaBackend(backendContext);
-
-  const defaultLlamaDir = process.platform === 'win32'
-    ? path.join(binDir, 'llama')
-    : path.join(binDir, `llama-${process.platform === 'darwin' ? 'macos' : 'linux'}-${process.arch === 'arm64' ? 'arm64' : 'x64'}`);
-  const llamaExeDir = backend.llamaExeDir || defaultLlamaDir;
+  // Cookbook state removed — API-only mode
+  // Backend initialization removed — API-only mode
+  
+  console.log('[API Mode] Starting Odysseus without local LLM backend...');
   const odysseusEnv = {
     ...process.env,
-    ...(backend.env || {}),
-    PATH: llamaExeDir + path.delimiter + odysseusBinDir + path.delimiter + ((backend.env && backend.env.PATH) || process.env.PATH || '')
+    PATH: odysseusBinDir + path.delimiter + (process.env.PATH || '')
   };
   
   const odysseusProcess = spawn(pythonExe, [
@@ -1172,24 +1080,10 @@ async function main() {
     if (isExiting) return;
     isExiting = true;
     console.log('\n[Orchestrator] Gracefully shutting down servers...');
-    if (typeof backend !== 'undefined' && backend && backend.processes) {
-      for (const item of backend.processes) {
-        try {
-          runtimeTracker.terminate(item.process.pid);
-        } catch (e) {}
-      }
-    }
     if (typeof odysseusProcess !== 'undefined' && odysseusProcess) {
       try {
         runtimeTracker.terminate(odysseusProcess.pid);
       } catch (e) {}
-    }
-    if (typeof backend !== 'undefined' && backend && backend.servers) {
-      for (const item of backend.servers) {
-        try {
-          item.server.close();
-        } catch (e) {}
-      }
     }
     
     if (typeof restoreStdoutStderr === 'function') {
@@ -1209,13 +1103,7 @@ async function main() {
   process.on('exit', (code) => {
     if (!isExiting) {
       isExiting = true;
-      if (typeof backend !== 'undefined' && backend && backend.processes) {
-        for (const item of backend.processes) {
-          try {
-            runtimeTracker.terminate(item.process.pid);
-          } catch (e) {}
-        }
-      }
+      // Backend cleanup removed — API-only mode
       if (typeof odysseusProcess !== 'undefined' && odysseusProcess) {
         try {
           runtimeTracker.terminate(odysseusProcess.pid);
