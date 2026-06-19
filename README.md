@@ -159,8 +159,8 @@ Same as upstream: [MIT License](LICENSE)
 
 ## 🙏 Credits
 
-- Original project: [PromtEngineer/Odysseus](https://github.com/PromtEngineer/Odysseus)
-- Portable launcher concept: [tertua/odysseus-portable](https://github.com/tertua/odysseus-portable)
+- Original project: [pewdiepie-archdaemon/odysseus](https://github.com/pewdiepie-archdaemon/odysseus/tree/main)
+- Portable launcher concept: [techjarves/odysseus-portable](https://github.com/techjarves/Odysseus-Portable)
 
 ---
 
