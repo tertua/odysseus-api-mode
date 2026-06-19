@@ -1,6 +1,6 @@
 # Odysseus API-Only Mode
 
-**A portable, API-first fork of [Odysseus](https://github.com/PromtEngineer/Odysseus) without local LLM dependencies.**
+**A portable, API-first fork of [Odysseus](https://github.com/pewdiepie-archdaemon/odysseus/tree/main) without local LLM dependencies.**
 
 ---
 
